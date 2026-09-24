@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import type * as ChildProcess from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -438,8 +439,167 @@ describe("backup-service", () => {
     // successful restore left no container for a restart policy to revive.
     const restartIndex = command.lastIndexOf("restart_existing_stacks");
     const rebootIndex = command.indexOf("systemctl reboot");
-    expect(restartIndex).toBeGreaterThan(command.indexOf("docker compose down"));
+    const downIndex = command.indexOf("compose_stacks down");
+    expect(downIndex).toBeGreaterThan(-1);
+    expect(restartIndex).toBeGreaterThan(downIndex);
     expect(restartIndex).toBeLessThan(rebootIndex);
+  });
+
+  describe("running the restore script", () => {
+    // These run the generated script under bash, against real directories, with
+    // docker, psql and systemctl replaced by stubs that record what they were
+    // asked. Asserting on the text of the script is what let a restore that
+    // wiped the database pass 1327 tests; this asserts on what it does.
+    type Run = {
+      status: number | null;
+      calls: string[];
+      dataRoot: string;
+      stacksRoot: string;
+      composePath: string;
+    };
+
+    async function runRestore(options: {
+      dump: string;
+      knownStacks: (stacksRoot: string) => string[];
+    }): Promise<Run> {
+      const { spawnSync } = await vi.importActual<typeof ChildProcess>("node:child_process");
+      const root = await mkdtemp(path.join(os.tmpdir(), "homeio-restore-run-"));
+      const bin = path.join(root, "bin");
+      const callLog = path.join(root, "calls.log");
+      const restoreLog = path.join(root, "restore.log");
+      const archiveSource = path.join(root, "archive");
+      tempRoots.stacksRoot = path.join(root, "stacks");
+      serverEnvMock.STORE_APP_DATA_ROOT = path.join(tempRoots.dataRoot, "AppData");
+      const composePath = path.join(tempRoots.stacksRoot, "uptimekuma", "docker-compose.yml");
+
+      // Today's machine: a file the archive does not have, one stack Homeio
+      // runs under a project name its file does not carry, and one with no row.
+      await mkdir(path.join(tempRoots.dataRoot, "Documents"), { recursive: true });
+      await writeFile(path.join(tempRoots.dataRoot, "Documents", "today.txt"), "today");
+      await mkdir(path.dirname(composePath), { recursive: true });
+      await writeFile(composePath, "name: uptimekuma\n");
+      await mkdir(path.join(tempRoots.stacksRoot, "unlisted"), { recursive: true });
+      await writeFile(path.join(tempRoots.stacksRoot, "unlisted", "docker-compose.yml"), "services: {}\n");
+
+      await mkdir(path.join(archiveSource, "db"), { recursive: true });
+      await writeFile(path.join(archiveSource, "db", "database.sql"), options.dump);
+      await mkdir(path.join(archiveSource, "data-root", "Documents"), { recursive: true });
+      await writeFile(path.join(archiveSource, "data-root", "Documents", "archived.txt"), "archived");
+
+      const backupRoot = resolveManagedBackupRoot();
+      await mkdir(backupRoot, { recursive: true });
+      const id = `backup-run-${path.basename(root)}`;
+      const backupPath = path.join(backupRoot, `${id}.tar.gz`);
+      spawnSync("tar", ["-czf", backupPath, "-C", archiveSource, "db", "data-root"]);
+
+      const known = options.knownStacks(tempRoots.stacksRoot).join("\\n");
+      const stubs: Record<string, string> = {
+        // Every stub records its arguments, one call per line.
+        docker: `echo "docker $*" >> ${callLog}`,
+        systemctl: `echo "systemctl $*" >> ${callLog}`,
+        // A stub psql that answers the stack query, and fails any file that
+        // carries the word BROKEN the way a real one fails a syntax error.
+        psql: [
+          `echo "psql $*" >> ${callLog}`,
+          `for arg in "$@"; do case "$arg" in *"SELECT compose_path"*) printf '${known}\\n'; exit 0;; esac; done`,
+          `prev=""; for arg in "$@"; do if [ "$prev" = "-f" ] && grep -q BROKEN "$arg"; then echo "syntax error at or near BROKEN" >&2; exit 3; fi; prev="$arg"; done`,
+        ].join("\n"),
+        sleep: "exit 0",
+        date: "echo 2026-09-25T00:00:00+00:00",
+      };
+      await mkdir(bin, { recursive: true });
+      for (const [name, body] of Object.entries(stubs)) {
+        await writeFile(path.join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+      }
+
+      const command = buildRestoreShellCommand({
+        id,
+        createdAt: "2026-09-24T22:18:11.000Z",
+        sizeBytes: 1,
+        appVersion: "2.0.90",
+        hostname: "home-node",
+        backupPath,
+        dbDumpIncluded: true,
+        dataRootIncluded: true,
+        stacksRootIncluded: false,
+        storeConfigIncluded: false,
+        status: "completed",
+      }).replace("/var/log/homeio-restore.log", restoreLog);
+
+      const result = spawnSync("bash", ["-c", command], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+        encoding: "utf8",
+      });
+      const calls = await readFile(callLog, "utf8").then((raw) => raw.trim().split("\n"), () => []);
+      // A failed restore leaves its extraction behind; do not leave it on the
+      // machine running the tests.
+      await rm(path.join("/var/tmp", `homeio-restore-${id}`), { recursive: true, force: true });
+
+      return {
+        status: result.status,
+        calls,
+        dataRoot: tempRoots.dataRoot,
+        stacksRoot: tempRoots.stacksRoot,
+        composePath,
+      };
+    }
+
+    async function exists(file: string) {
+      return stat(file).then(() => true, () => false);
+    }
+
+    it("stops and restarts a stack under the project name Homeio runs it as", async () => {
+      const run = await runRestore({
+        dump: "CREATE TABLE t ();\n",
+        knownStacks: (stacksRoot) => [
+          `${path.join(stacksRoot, "uptimekuma", "docker-compose.yml")}|uptime-kuma`,
+        ],
+      });
+
+      expect(run.status).toBe(0);
+      const unlisted = path.join(run.stacksRoot, "unlisted", "docker-compose.yml");
+      const down = run.calls.indexOf(`docker compose -p uptime-kuma -f ${run.composePath} down`);
+      const up = run.calls.indexOf(`docker compose -p uptime-kuma -f ${run.composePath} up -d`);
+      expect(down).toBeGreaterThan(-1);
+      expect(up).toBeGreaterThan(down);
+      // A stack the database does not know keeps the file's own project name.
+      expect(run.calls).toContain(`docker compose -f ${unlisted} down`);
+      expect(run.calls).toContain(`docker compose -f ${unlisted} up -d`);
+      expect(run.calls.at(-1)).toBe("systemctl reboot");
+    });
+
+    it("refuses a dump that does not load before touching anything on disk", async () => {
+      const run = await runRestore({
+        dump: "CREATE TABLE t ();\nBROKEN half a statement\n",
+        knownStacks: () => [],
+      });
+
+      expect(run.status).not.toBe(0);
+      // Today's files are still there and the archive's never arrived.
+      expect(await exists(path.join(run.dataRoot, "Documents", "today.txt"))).toBe(true);
+      expect(await exists(path.join(run.dataRoot, "Documents", "archived.txt"))).toBe(false);
+      // The real load never ran, and the machine was not rebooted.
+      expect(run.calls.some((call) => call.includes("--single-transaction"))).toBe(false);
+      expect(run.calls).not.toContain("systemctl reboot");
+      // The recovery trap brought the service and the stacks back.
+      expect(run.calls).toContain("systemctl start home-server.service");
+      expect(run.calls.some((call) => call.endsWith("up -d"))).toBe(true);
+    });
+
+    it("replaces the files and loads the dump when it does load", async () => {
+      const run = await runRestore({ dump: "CREATE TABLE t ();\n", knownStacks: () => [] });
+
+      expect(run.status).toBe(0);
+      expect(await exists(path.join(run.dataRoot, "Documents", "today.txt"))).toBe(false);
+      expect(await exists(path.join(run.dataRoot, "Documents", "archived.txt"))).toBe(true);
+      // The rehearsal comes first and loads nothing; the real load comes after
+      // the files, as one transaction.
+      const rehearsal = run.calls.findIndex((call) => call.endsWith("rehearsal.sql"));
+      const load = run.calls.findIndex((call) => call.includes("--single-transaction"));
+      expect(rehearsal).toBeGreaterThan(-1);
+      expect(load).toBeGreaterThan(rehearsal);
+      expect(run.calls).toContain("systemctl reboot");
+    });
   });
 
   it("skips copying an external stacks root when it does not exist", async () => {

@@ -516,9 +516,21 @@ export function buildRestoreShellCommand(backup: SystemBackupSummary) {
   // Nothing to spare when the backups live outside the data root.
   const keepBackups = backupDirName ? `! -name ${shellEscape(backupDirName)} ` : "";
 
+  // Homeio runs every stack as `-p <stack_name>`, and that name is not always
+  // the one compose derives from the file: an app whose file says
+  // `name: uptimekuma` runs as project `uptime-kuma`. Deriving it from the file
+  // made `down` find nothing and `up` collide with the container still
+  // running, so the restore replaced an app's data underneath it. The names
+  // are read from the database each time rather than once, because after the
+  // load it is the restored database that says which stacks exist. A stack
+  // with no row, or a database that cannot answer, falls back to the file.
+  const stackProjectsSql = "SELECT compose_path, stack_name FROM app_stacks";
+  const rehearsalSqlFile = path.join(restoreRoot, "db", "rehearsal.sql");
+
   return [
     `set -Eeuo pipefail`,
-    `restart_existing_stacks() { if [ -d ${shellEscape(stacksRoot)} ]; then find ${shellEscape(stacksRoot)} -name docker-compose.yml -print0 | while IFS= read -r -d '' compose; do docker compose -f "$compose" up -d || true; done; fi; }`,
+    `compose_stacks() { if [ -d ${shellEscape(stacksRoot)} ]; then known=$(psql ${shellEscape(serverEnv.DATABASE_URL)} -At -F '|' -c ${shellEscape(stackProjectsSql)} 2>/dev/null || true); find ${shellEscape(stacksRoot)} -name docker-compose.yml -print0 | while IFS= read -r -d '' compose; do project=$(printf '%s\\n' "$known" | awk -F'|' -v f="$compose" '$1 == f { print $2; exit }'); if [ -n "$project" ]; then docker compose -p "$project" -f "$compose" "$@" || true; else docker compose -f "$compose" "$@" || true; fi; done; fi; }`,
+    `restart_existing_stacks() { compose_stacks up -d; }`,
     `restore_failed() { status=$?; echo "[$(date -Is)] Restore failed with exit $status; attempting service recovery"; systemctl unmask home-server.service || true; systemctl start home-server.service || true; restart_existing_stacks; exit $status; }`,
     `trap restore_failed ERR`,
     `sleep 2`,
@@ -532,12 +544,21 @@ export function buildRestoreShellCommand(backup: SystemBackupSummary) {
     // because the restore ends with `systemctl reboot`.
     `systemctl stop home-server.service || true`,
     `systemctl mask --runtime home-server.service || true`,
-    `if [ -d ${shellEscape(stacksRoot)} ]; then find ${shellEscape(stacksRoot)} -name docker-compose.yml -print0 | while IFS= read -r -d '' compose; do docker compose -f \"$compose\" down || true; done; fi`,
+    `compose_stacks down`,
     `tar -xzf ${shellEscape(backup.backupPath)} -C ${shellEscape(restoreRoot)}`,
     // Refuse to touch anything until the archive has proven it carries a
     // database dump. `set -e` sends a failure here to the recovery trap with
     // the server still intact.
     `test -s ${shellEscape(dumpFile)}`,
+    `{ printf '%s\n' ${shellEscape(resetSchemasSql)}; cat ${shellEscape(dumpFile)}; } > ${shellEscape(combinedSqlFile)}`,
+    `psql ${shellEscape(serverEnv.DATABASE_URL)} -v ON_ERROR_STOP=1 -c ${shellEscape(terminateConnectionsSql)} || true`,
+    // A dump that is present is not a dump that loads. The load below rolls
+    // itself back on failure, but by then the data root, the stacks and the
+    // store registry have already been replaced, so a broken dump left the
+    // files of the archive under the database of today. Play the whole load
+    // once and throw it away before anything on disk is touched.
+    `{ printf '%s\n' 'BEGIN;'; cat ${shellEscape(combinedSqlFile)}; printf '\n%s\n' 'ROLLBACK;'; } > ${shellEscape(rehearsalSqlFile)}`,
+    `psql ${shellEscape(serverEnv.DATABASE_URL)} -v ON_ERROR_STOP=1 -f ${shellEscape(rehearsalSqlFile)}`,
     `if [ -d ${shellEscape(dataRoot)} ]; then find ${shellEscape(dataRoot)} -mindepth 1 -maxdepth 1 ${keepBackups}-exec rm -rf {} +; else mkdir -p ${shellEscape(dataRoot)}; fi`,
     `mkdir -p ${shellEscape(dataRoot)}`,
     `cp -a ${shellEscape(restoredDataRootContents)} ${shellEscape(`${dataRoot}/`)}`,
@@ -551,7 +572,6 @@ export function buildRestoreShellCommand(backup: SystemBackupSummary) {
     // One transaction: if any statement fails the whole thing rolls back and
     // the existing database survives. Previously the wipe was committed before
     // the dump ran, so a failure left nothing behind.
-    `{ printf '%s\n' ${shellEscape(resetSchemasSql)}; cat ${shellEscape(dumpFile)}; } > ${shellEscape(combinedSqlFile)}`,
     `psql ${shellEscape(serverEnv.DATABASE_URL)} -v ON_ERROR_STOP=1 --single-transaction -f ${shellEscape(combinedSqlFile)}`,
     `rm -rf ${shellEscape(restoreRoot)}`,
     // `docker compose down` above removed the containers, so nothing is left
