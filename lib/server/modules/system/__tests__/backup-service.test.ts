@@ -39,6 +39,7 @@ vi.mock("@/lib/server/env", () => ({
 
 import {
     buildRestoreShellCommand,
+    getSystemBackupAvailability,
     getSystemBackupsSnapshot,
     parseSystemRestoreOutcome,
     resolveManagedBackupRoot,
@@ -444,6 +445,37 @@ describe("backup-service", () => {
     expect(downIndex).toBeGreaterThan(-1);
     expect(restartIndex).toBeGreaterThan(downIndex);
     expect(restartIndex).toBeLessThan(rebootIndex);
+  });
+
+  it("says which tools this host lacks before anyone presses a button", async () => {
+    // The Docker image: tar is there, pg_dump, psql and systemd-run are not.
+    const installed = new Set(["tar"]);
+    execFileMock.mockImplementation((command: string, args: string[], ...rest: unknown[]) => {
+      const callback = resolveExecFileCallback(rest);
+      if (command === "which" && installed.has(args[0]!)) {
+        callback(null, `/usr/bin/${args[0]}\n`, "");
+        return;
+      }
+      // `which` says "not found" by exiting 1 with nothing on stdout.
+      callback(Object.assign(new Error("which failed"), { code: 1 }), "", "");
+    });
+
+    const availability = await getSystemBackupAvailability();
+
+    expect(availability.runNow).toEqual({
+      available: false,
+      reason: "Backing up needs pg_dump, which is not installed on this host.",
+    });
+    expect(availability.restore).toEqual({
+      available: false,
+      reason: "Restoring needs systemd-run and psql, which are not installed on this host.",
+    });
+
+    installed.add("pg_dump").add("psql").add("systemd-run");
+    expect(await getSystemBackupAvailability()).toEqual({
+      runNow: { available: true, reason: null },
+      restore: { available: true, reason: null },
+    });
   });
 
   describe("running the restore script", () => {

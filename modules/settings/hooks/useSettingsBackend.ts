@@ -213,17 +213,10 @@ export function useSettingsBackend() {
     onSuccess: async (data) => {
       queryClient.setQueryData<SystemBackupListResponse | undefined>(
         queryKeys.systemBackups,
-        (current) =>
-          current
-            ? {
-                ...current,
-                settings: data,
-              }
-            : {
-                settings: data,
-                backups: [],
-                backupRoot: DEFAULT_BACKUP_ROOT,
-              },
+        // With nothing cached there is nothing to patch, and inventing a
+        // snapshot would mean inventing what this host can do; the refetch
+        // below brings the real one.
+        (current) => (current ? { ...current, settings: data } : current),
       );
       await queryClient.invalidateQueries({ queryKey: queryKeys.systemBackups });
     },
@@ -629,6 +622,7 @@ export function useSettingsBackend() {
       },
       backups: snapshot?.backups ?? [],
       backupRoot: snapshot?.backupRoot ?? DEFAULT_BACKUP_ROOT,
+      availability: snapshot?.availability ?? null,
       isLoading: backupsQuery.isLoading,
       runNow: {
         isPending: backupRunMutation.isPending,

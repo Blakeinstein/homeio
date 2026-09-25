@@ -213,10 +213,20 @@ export type SystemBackupSummary = {
   status: "completed" | "failed";
 };
 
+/** Whether an action can work on this host, and if not, why not. */
+export type SystemFeatureAvailability = {
+  available: boolean;
+  reason: string | null;
+};
+
 export type SystemBackupListResponse = {
   settings: SystemBackupSettings;
   backups: SystemBackupSummary[];
   backupRoot: string;
+  availability: {
+    runNow: SystemFeatureAvailability;
+    restore: SystemFeatureAvailability;
+  };
 };
 
 export type SystemRestoreAcceptedResponse = {

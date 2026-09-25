@@ -9,11 +9,17 @@ import { resolveStoreConfigDirectory } from "@/lib/server/modules/store/catalog-
 import { resolveDataRootDirectory, resolveStoreStacksRoot } from "@/lib/server/storage/data-root";
 import * as systemd from "@/lib/server/platform/systemd";
 import * as backup from "@/lib/server/platform/backup";
+import {
+  isAvailable as isBinaryAvailable,
+  type AllowedBinary,
+  type ScriptOnlyBinary,
+} from "@/lib/server/platform/process";
 import type {
   SystemBackupDayOfWeek,
   SystemBackupListResponse,
   SystemBackupSettings,
   SystemBackupSummary,
+  SystemFeatureAvailability,
   SystemRestoreOutcome,
   SystemRestoreStep,
 } from "@/lib/shared/contracts/system";
@@ -370,16 +376,48 @@ export async function listSystemBackups(): Promise<SystemBackupSummary[]> {
   }
 }
 
+// What each action runs on the host. The Docker image carries none of pg_dump,
+// psql or systemd-run, so both buttons were offered there and failed every
+// time with a 500 that said nothing about why.
+const RUN_NOW_BINARIES = ["pg_dump", "tar"] as const;
+const RESTORE_BINARIES = ["systemd-run", "psql", "tar"] as const;
+
+async function describeAvailability(
+  binaries: readonly (AllowedBinary | ScriptOnlyBinary)[],
+  action: string,
+): Promise<SystemFeatureAvailability> {
+  const present = await Promise.all(binaries.map((binary) => isBinaryAvailable(binary)));
+  const missing = binaries.filter((_, index) => !present[index]);
+
+  if (missing.length === 0) return { available: true, reason: null };
+
+  const list = missing.join(" and ");
+  return {
+    available: false,
+    reason: `${action} needs ${list}, which ${missing.length === 1 ? "is" : "are"} not installed on this host.`,
+  };
+}
+
+export async function getSystemBackupAvailability(): Promise<SystemBackupListResponse["availability"]> {
+  const [runNow, restore] = await Promise.all([
+    describeAvailability(RUN_NOW_BINARIES, "Backing up"),
+    describeAvailability(RESTORE_BINARIES, "Restoring"),
+  ]);
+  return { runNow, restore };
+}
+
 export async function getSystemBackupsSnapshot(): Promise<SystemBackupListResponse> {
-  const [settings, backups] = await Promise.all([
+  const [settings, backups, availability] = await Promise.all([
     getSystemBackupSettings(),
     listSystemBackups(),
+    getSystemBackupAvailability(),
   ]);
 
   return {
     settings,
     backups,
     backupRoot: resolveManagedBackupRoot(),
+    availability,
   };
 }
 
