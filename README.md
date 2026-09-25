@@ -104,7 +104,8 @@ curl -fsSL https://raw.githubusercontent.com/doctor-io/homeio/main/scripts/unins
 
 - Change `AUTH_SESSION_SECRET` to a random 32+ character string before exposing outside your LAN
 - Put Homeio behind a TLS reverse proxy for HTTPS — the `Secure` cookie flag is set automatically when requests arrive over HTTPS. A built-in reverse proxy manager with automatic Let's Encrypt certificates is planned; in the meantime, Cloudflare Tunnel gives you HTTPS on a public hostname without opening a port.
-- The built-in terminal enforces a strict command allowlist — it is not a full shell
+- The built-in terminal is a full shell on the host (or inside a container) for whoever is logged in; only the one-off command API is limited to an allowlist
+- Found a vulnerability? Report it privately — see [SECURITY.md](./SECURITY.md)
 
 ---
 
