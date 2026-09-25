@@ -40,6 +40,7 @@ vi.mock("@/lib/server/env", () => ({
 import {
     buildRestoreShellCommand,
     getSystemBackupsSnapshot,
+    parseSystemRestoreOutcome,
     resolveManagedBackupRoot,
     runSystemBackupNow,
     scheduleSystemBackupRestore,
@@ -453,13 +454,15 @@ describe("backup-service", () => {
     type Run = {
       status: number | null;
       calls: string[];
+      /** What the script wrote for the server to read back, as the server reads it. */
+      outcome: ReturnType<typeof parseSystemRestoreOutcome>;
       dataRoot: string;
       stacksRoot: string;
       composePath: string;
     };
 
     async function runRestore(options: {
-      dump: string;
+      dump: string | null;
       knownStacks: (stacksRoot: string) => string[];
     }): Promise<Run> {
       const { spawnSync } = await vi.importActual<typeof ChildProcess>("node:child_process");
@@ -482,7 +485,9 @@ describe("backup-service", () => {
       await writeFile(path.join(tempRoots.stacksRoot, "unlisted", "docker-compose.yml"), "services: {}\n");
 
       await mkdir(path.join(archiveSource, "db"), { recursive: true });
-      await writeFile(path.join(archiveSource, "db", "database.sql"), options.dump);
+      if (options.dump !== null) {
+        await writeFile(path.join(archiveSource, "db", "database.sql"), options.dump);
+      }
       await mkdir(path.join(archiveSource, "data-root", "Documents"), { recursive: true });
       await writeFile(path.join(archiveSource, "data-root", "Documents", "archived.txt"), "archived");
 
@@ -524,7 +529,9 @@ describe("backup-service", () => {
         stacksRootIncluded: false,
         storeConfigIncluded: false,
         status: "completed",
-      }).replace("/var/log/homeio-restore.log", restoreLog);
+      }, "restore-under-test")
+        .replace("/var/log/homeio-restore.log", restoreLog)
+        .replaceAll("/var/lib/homeio", path.join(root, "state"));
 
       const result = spawnSync("bash", ["-c", command], {
         env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
@@ -535,9 +542,15 @@ describe("backup-service", () => {
       // machine running the tests.
       await rm(path.join("/var/tmp", `homeio-restore-${id}`), { recursive: true, force: true });
 
+      const outcome = await readFile(path.join(root, "state", "restore-status.json"), "utf8").then(
+        parseSystemRestoreOutcome,
+        () => null,
+      );
+
       return {
         status: result.status,
         calls,
+        outcome,
         dataRoot: tempRoots.dataRoot,
         stacksRoot: tempRoots.stacksRoot,
         composePath,
@@ -584,6 +597,23 @@ describe("backup-service", () => {
       // The recovery trap brought the service and the stacks back.
       expect(run.calls).toContain("systemctl start home-server.service");
       expect(run.calls.some((call) => call.endsWith("up -d"))).toBe(true);
+      // And it says so, in a form the server reads back after it restarts.
+      expect(run.outcome).toMatchObject({
+        restoreId: "restore-under-test",
+        status: "failed",
+        step: "rehearsing",
+        exitCode: 3,
+      });
+      expect(run.outcome?.message).toContain("Nothing was changed");
+    });
+
+    it("records an archive without a dump as failing before any change", async () => {
+      const run = await runRestore({ dump: null, knownStacks: () => [] });
+
+      expect(run.status).not.toBe(0);
+      expect(await exists(path.join(run.dataRoot, "Documents", "today.txt"))).toBe(true);
+      expect(run.outcome).toMatchObject({ status: "failed", step: "checking-dump" });
+      expect(run.outcome?.message).toContain("has no database dump");
     });
 
     it("replaces the files and loads the dump when it does load", async () => {
@@ -599,6 +629,7 @@ describe("backup-service", () => {
       expect(rehearsal).toBeGreaterThan(-1);
       expect(load).toBeGreaterThan(rehearsal);
       expect(run.calls).toContain("systemctl reboot");
+      expect(run.outcome).toMatchObject({ status: "completed", step: "restarting-apps", exitCode: 0 });
     });
   });
 

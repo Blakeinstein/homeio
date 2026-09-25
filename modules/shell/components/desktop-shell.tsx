@@ -3,6 +3,7 @@
 import { Search } from "@/components/icons/platform-icons";
 import { CurrentUserError, useCurrentUser } from "@/hooks/useCurrentUser";
 import { readLockState, writeLockState } from "@/lib/desktop/lock-state";
+import { dispatchDesktopNotificationEvent } from "@/lib/desktop/notification-events";
 import {
   clearPersistedPowerActionCompletion,
   readPersistedPowerActionCompletion,
@@ -186,7 +187,26 @@ function DesktopShellInner() {
       return;
     }
 
-    toast.success("System action completed.");
+    if (completion.tone === "error" || completion.tone === "warning") {
+      const title = completion.tone === "error" ? "Restore Failed" : "Restore Outcome Unknown";
+      const message = completion.message ?? "The system action did not complete.";
+      // Kept on screen until dismissed, and in the notification centre after:
+      // this is the one place the person learns their machine is not in the
+      // state they asked for.
+      (completion.tone === "error" ? toast.error : toast.warning)(title, {
+        description: message,
+        duration: Infinity,
+      });
+      dispatchDesktopNotificationEvent({
+        id: `power-action-${completion.action}-${completion.completedAt}`,
+        title,
+        message,
+        kind: "backup-report",
+      });
+      return;
+    }
+
+    toast.success(completion.message ?? "System action completed.");
   }, [rebootRecovery.isActive, rebootRecovery.isHydrated]);
 
   useEffect(() => {

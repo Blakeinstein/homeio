@@ -252,14 +252,14 @@ export function useSettingsBackend() {
 
   const restoreBackupMutation = useMutation({
     mutationFn: restoreBackupRequest,
-    onSuccess: (_data, backupId) => {
+    onSuccess: (data, backupId) => {
       dispatchDesktopNotificationEvent({
         id: `backup-restore-${backupId}`,
         title: "Restore Scheduled",
         message: `Restore from backup ${backupId} was accepted. Homeio will restart to finish it.`,
         kind: "backup-report",
       });
-      persistPowerActionState("restore");
+      persistPowerActionState("restore", { restoreId: data.restoreId });
     },
     onError: (error, backupId) => {
       dispatchDesktopNotificationEvent({
