@@ -9,5 +9,10 @@ export async function register() {
       "@/lib/server/modules/files/usb-storage"
     );
     startUsbPoller();
+
+    const { startTelemetry } = await import(
+      "@/lib/server/modules/telemetry/service"
+    );
+    startTelemetry();
   }
 }

@@ -3,6 +3,7 @@
 import { SectionDivider } from "@/modules/settings/components/panel/controls";
 import { LogsSection } from "@/modules/settings/components/panel/sections/logs-section";
 import { ServerInfoSection } from "@/modules/settings/components/panel/sections/server-info-section";
+import { TelemetrySection } from "@/modules/settings/components/panel/sections/telemetry-section";
 
 export function AdvancedSection() {
   return (
@@ -13,6 +14,11 @@ export function AdvancedSection() {
       <div className="mt-2">
         <SectionDivider title="Logs" />
         <LogsSection />
+      </div>
+
+      <div className="mt-2">
+        <SectionDivider title="Usage Stats" />
+        <TelemetrySection />
       </div>
     </div>
   );

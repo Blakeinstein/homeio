@@ -155,11 +155,11 @@ npm run db:reset    # Reset database (destructive)
 
 ## Telemetry
 
-In production, Homeio sends one anonymous ping to [PostHog](https://posthog.com) on startup. This tells us how many instances are active and which versions are in use — nothing more.
+In production, Homeio sends a small anonymous ping to `https://homeio.app/api/stats` a minute after startup and then every 12 hours. It tells us how many servers are running and which versions they are on, and the totals are public at [homeio.app/stats](https://homeio.app/stats).
 
-What is collected: a random instance UUID (generated once, stored in your local database), Homeio version, Node.js version, CPU architecture, and OS platform. No IP address, no usernames, no file paths, no app names.
+What is sent: a random instance UUID (generated once, stored in your local database), the Homeio version, the CPU architecture and the OS platform. That is the whole payload; see `lib/server/modules/telemetry/service.ts`. Your IP address is used only to rate-limit the endpoint and is never stored. No usernames, file paths, app names or hardware details are sent.
 
-To opt out, set `HOMEIO_TELEMETRY=false` in your environment.
+To opt out, turn off **Settings → Advanced → Usage Stats**, or set `HOMEIO_TELEMETRY=false` in your environment, which also locks the setting off. Demo mode and development builds never send anything.
 
 ---
 

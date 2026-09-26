@@ -552,7 +552,8 @@ Contains all 20+ environment variables with inline comments. Key variables:
 | `STORE_TEMPLATE_URL` | big-bear-portainer URL | App store catalog source |
 | `FILES_ROOT` | `/DATA` | Root directory for file manager |
 | `DOCKER_SOCKET_PATH` | `/var/run/docker.sock` | Docker socket path |
-| `HOMEIO_TELEMETRY` | (unset = enabled) | Opt-out of anonymous telemetry |
+| `HOMEIO_TELEMETRY` | (unset = enabled) | `false` turns off the anonymous stats ping and locks the setting off |
+| `HOMEIO_TELEMETRY_URL` | `https://homeio.app/api/stats` | Where the stats ping is sent |
 | `DEMO_MODE` | (unset = false) | Enable demo/read-only mode |
 | `METRICS_CACHE_TTL_MS` | `2000` | Metrics cache TTL |
 | `METRICS_PUBLISH_INTERVAL_MS` | `2000` | SSE metrics push interval |

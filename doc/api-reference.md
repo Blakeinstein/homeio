@@ -160,6 +160,8 @@ Contract: `lib/shared/contracts/scheduled-tasks.ts`.
 |---|---|---:|---|
 | `GET` | `/api/v1/settings/appearance` | Y | Appearance settings |
 | `PUT` | `/api/v1/settings/appearance` | Y | Save appearance settings |
+| `GET` | `/api/v1/settings/telemetry` | Y | Anonymous usage stats setting |
+| `PUT` | `/api/v1/settings/telemetry` | Y | Turn anonymous usage stats on or off (`{ "enabled": boolean }`) |
 | `GET` | `/api/v1/settings/google-oauth` | Y | Public Google OAuth config status |
 | `PUT` | `/api/v1/settings/google-oauth` | Y | Save Google OAuth client credentials |
 | `DELETE` | `/api/v1/settings/google-oauth` | Y | Clear Google OAuth client credentials |

@@ -47,4 +47,5 @@ export const queryKeys = {
   usbDrives: ["files", "usb"] as const,
   disks: ["system", "disks"] as const,
   serverInfo: ["system", "info"] as const,
+  telemetrySettings: ["settings", "telemetry"] as const,
 };
