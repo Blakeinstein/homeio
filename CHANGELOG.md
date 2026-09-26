@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Homeio is now source-available under the Business Source License 1.1, replacing MIT.** Running it for yourself, your household or your organization stays free, including in production and with modifications. What needs a commercial license is offering it to others as a hosted or managed service, or selling it, including preinstalled on hardware. Each version converts to the Apache License 2.0 four years after release. Versions up to and including 1.9.5 remain MIT.
+
 ### Added
 
 - **Anonymous usage stats, with public totals.** A minute after startup and then every 12 hours, a production server sends a random instance ID, the Homeio version, the CPU architecture and the OS to `https://homeio.app/api/stats`. Nothing else is sent, and the IP address is not stored. The counts are public at [homeio.app/stats](https://homeio.app/stats), so what is collected and what it shows are both visible. Turn it off in Settings → Advanced → Usage Stats, or with `HOMEIO_TELEMETRY=false`, which also locks the setting off.
