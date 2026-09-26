@@ -75,6 +75,19 @@ describe("disk-service safety validations", () => {
       await expect(mountPartition("/dev/sdb1", "/etc"))
         .rejects.toThrow("Cannot mount partition over critical system directory: /etc");
     });
+
+    it("only mounts inside /mnt, /media, /srv or /DATA", async () => {
+      for (const mountPoint of ["/opt/data", "/etc/ssh", "/root/.ssh", "/usr/local/bin", "/mnt", "/DATA", "/mnt/../etc/x"]) {
+        await expect(mountPartition("/dev/sdb1", mountPoint)).rejects.toThrow(/Mount point must be/);
+      }
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it("mounts inside an allowed folder, normalizing the path", async () => {
+      execFileMock.mockImplementation((...args: unknown[]) => (args.at(-1) as (...a: unknown[]) => void)(null, "", ""));
+      await mountPartition("/dev/sdb1", "/mnt//data/");
+      expect(execFileMock).toHaveBeenCalledWith("mount", ["/dev/sdb1", "/mnt/data"], expect.any(Object), expect.any(Function));
+    });
   });
 
   describe("unmountPartition", () => {

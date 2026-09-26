@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Dependencies with known vulnerabilities are updated.** Next.js 16.3.6 fixes server-side request forgery, a proxy bypass and several denial-of-service bugs; systeminformation fixes a command injection in `networkInterfaces()`, which Homeio calls for system stats; drizzle-orm, js-yaml, ws, sharp and a set of transitive packages are patched too. `npm audit --omit=dev` now reports nothing. The optional `usocket` add-on used by the D-Bus helper pulled in node-gyp 7 and the long-deprecated `request`; it is now built with node-gyp 11. The mobile app moves to Vite 8.
+- **Partitions can only be mounted inside `/mnt`, `/media`, `/srv` or `/DATA`.** A mount point was accepted anywhere outside a short blocklist, so a partition could be mounted over `/etc/ssh` or `/root` and hide what was there. The folders themselves are refused too, so a mount can't cover `/DATA`.
+- **Two slow regular expressions in the Cloudflare Tunnel settings are gone.** A domain or subdomain made of a long run of `/` or `-` took quadratic time to normalize.
+
+### Changed
+
+- **Homeio is now source-available under the Business Source License 1.1, replacing MIT.** Running it for yourself, your household or your organization stays free, including in production and with modifications. What needs a commercial license is offering it to others as a hosted or managed service, or selling it, including preinstalled on hardware. Each version converts to the Apache License 2.0 four years after release. Versions up to and including 1.9.5 remain MIT.
+
 ### Added
 
 - **Anonymous usage stats, with public totals.** A minute after startup and then every 12 hours, a production server sends a random instance ID, the Homeio version, the CPU architecture and the OS to `https://homeio.app/api/stats`. Nothing else is sent, and the IP address is not stored. The counts are public at [homeio.app/stats](https://homeio.app/stats), so what is collected and what it shows are both visible. Turn it off in Settings → Advanced → Usage Stats, or with `HOMEIO_TELEMETRY=false`, which also locks the setting off.

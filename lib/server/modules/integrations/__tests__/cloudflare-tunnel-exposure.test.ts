@@ -14,6 +14,9 @@ describe("cloudflare tunnel exposure", () => {
     expect(toSubdomain("  Nextcloud!  ")).toBe("nextcloud");
     expect(toSubdomain("2FAuth")).toBe("2fauth");
     expect(toSubdomain("--weird--name--")).toBe("weird-name");
+    expect(toSubdomain("-")).toBe("");
+    expect(toSubdomain("!!!")).toBe("");
+    expect(toSubdomain("-".repeat(50_000) + "x")).toBe("x");
   });
 
   it("keeps labels within the 63 character DNS limit", () => {

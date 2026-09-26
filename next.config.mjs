@@ -10,6 +10,9 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: "10gb",
     },
+    // Next 16.3 made the tsc CLI the default, which type-checks test files
+    // too. Keep checking only the app, as 16.2 did.
+    useTypeScriptCli: false,
   },
   // "standalone" is set via NEXT_OUTPUT env var during Docker builds only
   ...(process.env.NEXT_OUTPUT === "standalone" ? { output: "standalone" } : {}),
