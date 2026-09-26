@@ -2,6 +2,7 @@ import "server-only";
 
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile, access } from "node:fs/promises";
+import { posix } from "node:path";
 import { promisify } from "node:util";
 import type {
   DiskDevice,
@@ -161,6 +162,18 @@ const VALID_DISK_RE = /^\/dev\/(?:sd[a-z]+|nvme\d+n\d+|vd[a-z]+|mmcblk\d+|xvd[a-
 const VALID_PARTITION_RE = /^\/dev\/(?:sd[a-z]+\d+|nvme\d+n\d+p\d+|vd[a-z]+\d+|mmcblk\d+p\d+|xvd[a-z]+\d+)$/;
 const VALID_MOUNTPOINT_RE = /^\/[a-zA-Z0-9_\-\.\/]+$/;
 
+// Partitions are mounted inside one of these folders, never on the folder
+// itself, so a mount can't hide system files or Homeio's own data.
+const MOUNT_ROOTS = ["/mnt", "/media", "/srv", "/DATA"];
+
+function resolveMountPoint(mountPoint: string): string {
+  const resolved = posix.resolve(mountPoint);
+  if (!MOUNT_ROOTS.some((root) => resolved.startsWith(`${root}/`))) {
+    throw new Error(`Mount point must be a folder inside ${MOUNT_ROOTS.join(", ")}`);
+  }
+  return resolved;
+}
+
 async function checkDeviceNotMounted(deviceOrDisk: string, isWholeDisk = false): Promise<void> {
   try {
     const mounts = await readFile("/proc/mounts", "utf8");
@@ -234,11 +247,12 @@ export async function mountPartition(
     throw new Error("Device and mount point cannot contain whitespace or newline characters");
   }
 
-  await mkdir(mountPoint, { recursive: true });
-  await execFileAsync("mount", [device, mountPoint]);
+  const target = resolveMountPoint(mountPoint);
+  await mkdir(target, { recursive: true });
+  await execFileAsync("mount", [device, target]);
 
   if (addToFstab) {
-    await appendFstabEntry(device, mountPoint);
+    await appendFstabEntry(device, target);
   }
 }
 

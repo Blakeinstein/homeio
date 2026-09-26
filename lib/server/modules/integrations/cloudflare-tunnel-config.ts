@@ -22,11 +22,12 @@ async function ensureSettingsRow() {
 }
 
 function normalizeDomain(domain: string) {
-  return domain
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/+$/, "");
+  const normalized = domain.trim().toLowerCase().replace(/^https?:\/\//, "");
+  // Trailing slashes are stripped by scanning, not /\/+$/, which is quadratic
+  // on a long run of slashes followed by anything else.
+  let end = normalized.length;
+  while (end > 0 && normalized[end - 1] === "/") end--;
+  return normalized.slice(0, end);
 }
 
 export async function getCloudflareTunnelConfig(): Promise<CloudflareTunnelConfig> {
