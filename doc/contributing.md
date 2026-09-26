@@ -45,6 +45,7 @@ Important env vars include:
 - `DBUS_HELPER_SOCKET_PATH`
 - `TERMINAL_WS_REQUIRE_AUTH`
 - `HOMEIO_TELEMETRY`
+- `HOMEIO_TELEMETRY_URL`
 - `DEMO_MODE`
 
 ## D-Bus Helper
