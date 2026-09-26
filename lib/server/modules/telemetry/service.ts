@@ -8,6 +8,7 @@ import { db } from "@/lib/server/db/drizzle";
 import { settings } from "@/lib/server/db/schema";
 import { serverEnv } from "@/lib/server/env";
 import { logServerAction } from "@/lib/server/logging/logger";
+import { isContainerRuntime } from "@/lib/server/modules/system/update-service";
 import type {
   TelemetryPingPayload,
   TelemetrySettings,
@@ -61,6 +62,35 @@ async function readCurrentVersion() {
   return parsed.version?.trim() || "unknown";
 }
 
+const OS_RELEASE_PATH = "/etc/os-release";
+const DISTRO_ID = /^[a-z0-9._-]{1,32}$/;
+const DISTRO_VERSION = /^[0-9a-z._-]{1,16}$/i;
+
+/** ID and VERSION_ID from os-release text; anything unexpected becomes null. */
+export function parseOsRelease(text: string) {
+  const fields = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    const match = line.match(/^([A-Z_]+)=(.*)$/);
+    if (match) fields.set(match[1], match[2].trim().replace(/^(["'])(.*)\1$/, "$2"));
+  }
+  const id = fields.get("ID")?.toLowerCase() ?? "";
+  const version = fields.get("VERSION_ID") ?? "";
+  return {
+    distro: DISTRO_ID.test(id) ? id : null,
+    distroVersion: DISTRO_ID.test(id) && DISTRO_VERSION.test(version) ? version : null,
+  };
+}
+
+async function readHostSystem(): Promise<Pick<TelemetryPingPayload, "install" | "distro" | "distroVersion">> {
+  // Inside a container, os-release describes the image, not the host.
+  if (isContainerRuntime()) return { install: "docker", distro: null, distroVersion: null };
+  try {
+    return { install: "host", ...parseOsRelease(await readFile(OS_RELEASE_PATH, "utf8")) };
+  } catch {
+    return { install: "host", distro: null, distroVersion: null };
+  }
+}
+
 export async function getTelemetrySettings(): Promise<TelemetrySettings> {
   const row = await readTelemetryRow();
   const disabledByEnv = !serverEnv.HOMEIO_TELEMETRY;
@@ -81,12 +111,14 @@ export async function setTelemetryEnabled(enabled: boolean) {
 export function buildTelemetryPayload(
   instanceId: string,
   version: string,
+  system: Pick<TelemetryPingPayload, "install" | "distro" | "distroVersion">,
 ): TelemetryPingPayload {
   return {
     instanceId,
     version,
     arch: process.arch,
     platform: process.platform,
+    ...system,
   };
 }
 
@@ -112,6 +144,7 @@ export async function sendTelemetryPing(fetchImpl: typeof fetch = fetch) {
     const payload = buildTelemetryPayload(
       await resolveInstanceId(row.instanceId),
       await readCurrentVersion(),
+      await readHostSystem(),
     );
 
     const response = await fetchImpl(serverEnv.HOMEIO_TELEMETRY_URL, {

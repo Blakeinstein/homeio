@@ -157,7 +157,7 @@ npm run db:reset    # Reset database (destructive)
 
 In production, Homeio sends a small anonymous ping to `https://homeio.app/api/stats` a minute after startup and then every 12 hours. It tells us how many servers are running and which versions they are on, and the totals are public at [homeio.app/stats](https://homeio.app/stats).
 
-What is sent: a random instance UUID (generated once, stored in your local database), the Homeio version, the CPU architecture and the OS platform. That is the whole payload; see `lib/server/modules/telemetry/service.ts`. Your IP address is used only to rate-limit the endpoint and is never stored. No usernames, file paths, app names or hardware details are sent.
+What is sent: a random instance UUID (generated once, stored in your local database), the Homeio version, the CPU architecture, the OS platform, whether it runs in Docker, and — outside Docker — the Linux distribution and its version from `/etc/os-release` (for example `debian` `12`). Inside a container that file describes the image, not your machine, so it is not sent. That is the whole payload; see `lib/server/modules/telemetry/service.ts`. Your IP address is used only to rate-limit the endpoint and is never stored. No usernames, file paths, app names or hardware details are sent.
 
 To opt out, turn off **Settings → Advanced → Usage Stats**, or set `HOMEIO_TELEMETRY=false` in your environment, which also locks the setting off. Demo mode and development builds never send anything.
 
