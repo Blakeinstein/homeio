@@ -39,12 +39,12 @@ export function resolveOriginHost() {
 
 /** Subdomains are a DNS label: lowercase alphanumerics and dashes. */
 export function toSubdomain(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 63);
+  const label = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  // Each run is now a single dash, so there is at most one to drop at each
+  // end. Slicing instead of /-+$/ keeps this linear on hostile input.
+  const start = label.startsWith("-") ? 1 : 0;
+  const end = label.endsWith("-") ? label.length - 1 : label.length;
+  return label.slice(start, Math.max(start, end)).slice(0, 63);
 }
 
 export function buildTunnelUrl(subdomain: string, domain: string) {

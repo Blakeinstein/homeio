@@ -193,4 +193,10 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+Homeio is source-available under the [Business Source License 1.1](./LICENSE).
+
+- **Free to use in production** for yourself, your household or your organization: run it at home, at work, on as many servers as you like, and modify it.
+- **Not allowed without a commercial license:** offering Homeio to others as a hosted or managed service, or selling it, including preinstalled on hardware.
+- **Each version becomes open source** under the Apache License 2.0 four years after it is released.
+
+Versions up to and including 1.9.5 were released under the MIT License and stay under it. For a commercial license, email [tebib.ahmed0@gmail.com](mailto:tebib.ahmed0@gmail.com).
