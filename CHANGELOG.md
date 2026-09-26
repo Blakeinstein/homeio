@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **The usage stats ping says how Homeio is installed and on which distribution.** Every server reported `linux` as its OS, which told nobody anything. The ping now adds `install` (`docker` or `host`) and, for host installs, the `ID` and `VERSION_ID` from `/etc/os-release`, such as `debian` `12` or `ubuntu` `24.04`. Docker installs send no distribution: inside a container that file describes the image, not the machine. The kernel version is deliberately left out; it is close to unique per machine and says little. [homeio.app/stats](https://homeio.app/stats) shows both breakdowns.
 - **Homeio is now source-available under the Business Source License 1.1, replacing MIT.** Running it for yourself, your household or your organization stays free, including in production and with modifications. What needs a commercial license is offering it to others as a hosted or managed service, or selling it, including preinstalled on hardware. Each version converts to the Apache License 2.0 four years after release. Versions up to and including 1.9.5 remain MIT.
 
 ### Added

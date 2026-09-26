@@ -16,4 +16,10 @@ export type TelemetryPingPayload = {
   version: string;
   arch: string;
   platform: string;
+  /** "docker" inside a container, "host" when Homeio runs directly on the machine. */
+  install: "docker" | "host";
+  /** ID from /etc/os-release (debian, ubuntu…); null in Docker, where it names the image, not the host. */
+  distro: string | null;
+  /** VERSION_ID from /etc/os-release (12, 24.04…); null when absent or in Docker. */
+  distroVersion: string | null;
 };
