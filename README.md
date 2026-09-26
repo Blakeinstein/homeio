@@ -76,21 +76,23 @@ it spends on the interface and on treating the host as a first-class citizen.
 
 - Desktop shell UI with dock, windows, command palette (`⌘K`), widgets, and lock screen
 - Real-time system metrics (CPU, memory, disk, network) via SSE
-- App Store: install, update, uninstall Docker Compose apps — compatible with CasaOS store archives
+- App Store: install, update, uninstall Docker Compose apps — compatible with CasaOS store archives; add your own catalog sources
+- Cloudflare Tunnel: publish an app on a public hostname from the UI — Homeio creates the DNS record and the ingress rule for you
+- Backup and restore: scheduled archives of the database, your files and your compose stacks, restorable from the UI
+- Container log viewer: real-time streaming, log-level badges, keyword filter, download
 - File manager: browse, upload (with progress), download, multi-select copy/move, conflict resolution, audio/video/image/PDF preview, Monaco code editor
-- Terminal with command allowlist (ls, cat, docker, df, ping, and more)
+- Terminal: a full shell on the host, in a desktop window
 - Tailscale integration: install, activate, and monitor your tailnet from Settings — reach your server from anywhere without port forwarding
 - Runs on amd64 and arm64 — Raspberry Pi 4/5 pull a native image
 
 <details>
-<summary><strong>And 12 more — logs, backups, cron, USB, Samba, 2FA, Google Drive…</strong></summary>
+<summary><strong>And 11 more — cron, notifications, USB, Samba, 2FA, Google Drive…</strong></summary>
 
-- Container log viewer: real-time streaming, log-level badges, keyword filter, download
 - Scheduled tasks: built-in cron runner for shell commands, app restarts, backups, and image pulls — no SSH required
 - Notification system: real-time alerts for app events, container crashes, disk warnings, and task failures
 - USB drive support: auto-detect, mount, browse, and eject removable drives from the file manager
 - Local folder sharing over Samba and SMB network mount/unmount
-- Docker container stats in real time
+- Docker container stats in real time, including containers Homeio did not deploy
 - Network manager: WiFi and Ethernet via NetworkManager
 - Google Drive: connect accounts over OAuth 2.0 and browse Drive alongside local and network locations in the file manager
 - Two-factor authentication (TOTP) with backup codes — works with any authenticator app
@@ -159,9 +161,10 @@ registration, then reboots into a clean install.
 ## Security Notes
 
 - Change `AUTH_SESSION_SECRET` to a random 32+ character string before exposing outside your LAN
-- Put Homeio behind a TLS reverse proxy for HTTPS — the `Secure` cookie flag is set automatically when requests arrive over HTTPS. Tailscale ships integrated and can serve Homeio over HTTPS on your tailnet with no port forwarding and no certificates to renew.
+- Put Homeio behind a TLS reverse proxy for HTTPS — the `Secure` cookie flag is set automatically when requests arrive over HTTPS. Tailscale ships integrated and can serve Homeio over HTTPS on your tailnet with no port forwarding and no certificates to renew; Cloudflare Tunnel gives you HTTPS on a public hostname without opening a port.
 - Enable two-factor authentication (Settings → Users & Access) before exposing Homeio beyond your LAN
-- The built-in terminal enforces a strict command allowlist — it is not a full shell
+- The built-in terminal is a full shell on the host (or inside a container) for whoever is logged in; only the one-off command API is limited to an allowlist
+- Found a vulnerability? Report it privately — see [SECURITY.md](./SECURITY.md)
 
 ---
 
@@ -211,11 +214,11 @@ npm run db:reset    # Reset database (destructive)
 
 ## Telemetry
 
-In production, Homeio sends one anonymous ping to [PostHog](https://posthog.com) on startup. This tells us how many instances are active and which versions are in use — nothing more.
+In production, Homeio sends a small anonymous ping to `https://homeio.app/api/stats` a minute after startup and then every 12 hours. It tells us how many servers are running and which versions they are on, and the totals are public at [homeio.app/stats](https://homeio.app/stats).
 
-What is collected: a random instance UUID (generated once, stored in your local database), Homeio version, Node.js version, CPU architecture, and OS platform. No IP address, no usernames, no file paths, no app names.
+What is sent: a random instance UUID (generated once, stored in your local database), the Homeio version, the CPU architecture and the OS platform. That is the whole payload; see `lib/server/modules/telemetry/service.ts`. Your IP address is used only to rate-limit the endpoint and is never stored. No usernames, file paths, app names or hardware details are sent.
 
-To opt out, set `HOMEIO_TELEMETRY=false` in your environment.
+To opt out, turn off **Settings → Advanced → Usage Stats**, or set `HOMEIO_TELEMETRY=false` in your environment, which also locks the setting off. Demo mode and development builds never send anything.
 
 ---
 
