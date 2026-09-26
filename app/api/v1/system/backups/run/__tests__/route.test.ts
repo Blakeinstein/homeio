@@ -12,6 +12,16 @@ vi.mock("@/lib/server/modules/system/backup-service", () => ({
 import { POST } from "@/app/api/v1/system/backups/run/route";
 import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { runSystemBackupNow } from "@/lib/server/modules/system/backup-service";
+import { ProcessError } from "@/lib/server/platform/process";
+
+function post() {
+  return POST(
+    new NextRequest("http://localhost/api/v1/system/backups/run", {
+      method: "POST",
+      headers: { cookie: "homeio_session=session-token" },
+    }),
+  );
+}
 
 describe("POST /api/v1/system/backups/run", () => {
   it("returns 202 and backup metadata for authenticated users", async () => {
@@ -49,5 +59,40 @@ describe("POST /api/v1/system/backups/run", () => {
     expect(response.status).toBe(202);
     expect(json.data.accepted).toBe(true);
     expect(json.data.backup.id).toBe("backup-1");
+  });
+
+  it("says which tool is missing, as a 409, when this host cannot back up", async () => {
+    vi.mocked(authenticateSession).mockResolvedValue({
+      sessionId: "s1",
+      userId: "u1",
+      username: "ahmed",
+      passwordHash: "salt:hash",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    // What the platform throws when pg_dump is not installed, as in the Docker image.
+    vi.mocked(runSystemBackupNow).mockRejectedValueOnce(
+      new ProcessError("pg_dump", Object.assign(new Error("spawn pg_dump ENOENT"), { code: "ENOENT" })),
+    );
+
+    const response = await post();
+    const json = (await response.json()) as { error: string; code: string };
+
+    expect(response.status).toBe(409);
+    expect(json).toEqual({ error: "pg_dump is not available on this host", code: "unavailable_on_host" });
+  });
+
+  it("keeps a real failure a 500", async () => {
+    vi.mocked(authenticateSession).mockResolvedValue({
+      sessionId: "s1",
+      userId: "u1",
+      username: "ahmed",
+      passwordHash: "salt:hash",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    vi.mocked(runSystemBackupNow).mockRejectedValueOnce(new Error("disk full"));
+
+    const response = await post();
+
+    expect(response.status).toBe(500);
   });
 });

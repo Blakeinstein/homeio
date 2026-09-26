@@ -111,35 +111,107 @@ describe("useRebootRecovery", () => {
     expect(localStorage.getItem("system.power.action.v1")).toBeNull();
   });
 
-  it("keeps the restore overlay active until health and auth recover", async () => {
-    writePersistedPowerActionState(localStorage, {
-      action: "restore",
-      startedAt: new Date(Date.now() - 10_000).toISOString(),
+  describe("after a restore", () => {
+    // Routes by URL rather than by call order: the restore path makes a call
+    // the others do not, and the order of polls is not what is under test.
+    function stubServer(outcomes: Array<Record<string, unknown> | null>) {
+      let outcomeIndex = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/health")) return { ok: true, status: 200 };
+        if (url.includes("/api/auth/me")) return { ok: true, status: 200 };
+        if (url.includes("/restore-status")) {
+          const data = outcomes[Math.min(outcomeIndex, outcomes.length - 1)] ?? null;
+          outcomeIndex += 1;
+          return { ok: true, status: 200, json: async () => ({ data }) };
+        }
+        throw new Error(`unexpected ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    function outcome(status: "running" | "failed" | "completed", message: string) {
+      return {
+        restoreId: "restore-1",
+        backupId: "backup-2020-02-02T00-00-00Z",
+        status,
+        step: status === "failed" ? "rehearsing" : "restarting-apps",
+        exitCode: status === "failed" ? 3 : 0,
+        at: "2026-09-25T13:52:26Z",
+        message,
+      };
+    }
+
+    function startRestore(restoreId: string | undefined, secondsAgo = 20) {
+      writePersistedPowerActionState(localStorage, {
+        action: "restore",
+        startedAt: new Date(Date.now() - secondsAgo * 1_000).toISOString(),
+        restoreId,
+      });
+    }
+
+    async function recover() {
+      const { result } = renderHook(() => useRebootRecovery(), {
+        wrapper: createWrapper(createTestQueryClient()),
+      });
+      await waitFor(() => {
+        expect(result.current.isHydrated).toBe(true);
+      });
+      return result;
+    }
+
+    it("says the restore failed when the script says it did", async () => {
+      startRestore("restore-1");
+      stubServer([outcome("failed", "The restore failed. Nothing was changed.")]);
+
+      const result = await recover();
+      await waitFor(() => {
+        expect(result.current.isActive).toBe(false);
+      }, { timeout: 4_000 });
+
+      // The server answering again is not a success: this used to clear the
+      // screen in silence whether the restore had worked or not.
+      expect(readPersistedPowerActionCompletion(localStorage)).toMatchObject({
+        action: "restore",
+        tone: "error",
+        message: "The restore failed. Nothing was changed.",
+      });
     });
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 503 })
-      .mockResolvedValueOnce({ ok: true, status: 200 })
-      .mockResolvedValueOnce({ ok: true, status: 200 });
-    vi.stubGlobal("fetch", fetchMock);
+    it("keeps waiting while the restore is still running, then reports how it ended", async () => {
+      startRestore("restore-1");
+      const fetchMock = stubServer([
+        outcome("running", "still going"),
+        outcome("completed", "Restored from backup-2020-02-02T00-00-00Z."),
+      ]);
 
-    const client = createTestQueryClient();
+      const result = await recover();
+      await waitFor(() => {
+        expect(result.current.isActive).toBe(false);
+      }, { timeout: 6_000 });
 
-    const { result } = renderHook(() => useRebootRecovery(), {
-      wrapper: createWrapper(client),
+      const statusReads = fetchMock.mock.calls.filter(([url]) => String(url).includes("/restore-status"));
+      expect(statusReads.length).toBeGreaterThanOrEqual(2);
+      expect(readPersistedPowerActionCompletion(localStorage)).toMatchObject({
+        tone: "success",
+        message: "Restored from backup-2020-02-02T00-00-00Z.",
+      });
     });
 
-    await waitFor(() => {
-      expect(result.current.isHydrated).toBe(true);
-      expect(result.current.action).toBe("restore");
+    it("does not take another restore's outcome for this one", async () => {
+      startRestore("restore-2", 5 * 60);
+      stubServer([outcome("completed", "Restored from an older attempt.")]);
+
+      const result = await recover();
+      await waitFor(() => {
+        expect(result.current.isActive).toBe(false);
+      }, { timeout: 4_000 });
+
+      const completion = readPersistedPowerActionCompletion(localStorage);
+      expect(completion?.tone).toBe("warning");
+      expect(completion?.message).toContain("found no record of this restore");
     });
-
-    await waitFor(() => {
-      expect(result.current.isActive).toBe(false);
-    }, { timeout: 4_000 });
-
-    expect(localStorage.getItem("system.power.action.v1")).toBeNull();
   });
 
   it("keeps the update overlay active until health and auth recover", async () => {

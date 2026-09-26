@@ -6,8 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { writePersistedPowerActionCompletion } from "@/lib/desktop/reboot-state";
 import { createTestQueryClient, createWrapper } from "@/test/query-client-wrapper";
 
-const { toastSuccessMock } = vi.hoisted(() => ({
+const { toastSuccessMock, toastErrorMock, toastWarningMock } = vi.hoisted(() => ({
   toastSuccessMock: vi.fn(),
+  toastErrorMock: vi.fn(),
+  toastWarningMock: vi.fn(),
 }));
 
 const useCurrentUserMock = vi.fn();
@@ -60,6 +62,8 @@ vi.mock("@/modules/apps/hooks/useStoreCatalog", () => ({
 vi.mock("sonner", () => ({
   toast: {
     success: toastSuccessMock,
+    error: toastErrorMock,
+    warning: toastWarningMock,
   },
 }));
 
@@ -318,6 +322,65 @@ describe("DesktopShell reboot handling", () => {
       expect(toastSuccessMock).toHaveBeenCalledWith("Homeio update completed.");
     });
     expect(localStorage.getItem("system.power.action.completed.v1")).toBeNull();
+  });
+
+  describe("after a restore", () => {
+    function signedInAndRecovered() {
+      useCurrentUserMock.mockReturnValue({
+        data: { id: "u1", username: "ahmed" },
+        error: null,
+        isLoading: false,
+        isError: false,
+      });
+      useRebootRecoveryMock.mockReturnValue({
+        isHydrated: true,
+        isActive: false,
+        action: null,
+        phase: "reconnecting",
+        startedAt: null,
+      });
+    }
+
+    it("keeps a failed restore on screen and in the notifications", async () => {
+      signedInAndRecovered();
+      const notifications: string[] = [];
+      window.addEventListener("homeio:desktop-notification", (event) => {
+        notifications.push((event as CustomEvent<{ title: string }>).detail.title);
+      });
+      writePersistedPowerActionCompletion(localStorage, {
+        action: "restore",
+        completedAt: new Date().toISOString(),
+        tone: "error",
+        message: "The restore from backup-x failed because the database dump in the archive does not load.",
+      });
+
+      renderDesktopShell();
+
+      await waitFor(() => {
+        expect(toastErrorMock).toHaveBeenCalledWith("Restore Failed", {
+          description: "The restore from backup-x failed because the database dump in the archive does not load.",
+          duration: Infinity,
+        });
+      });
+      expect(toastSuccessMock).not.toHaveBeenCalled();
+      expect(notifications).toContain("Restore Failed");
+    });
+
+    it("says what a restore that worked restored", async () => {
+      signedInAndRecovered();
+      writePersistedPowerActionCompletion(localStorage, {
+        action: "restore",
+        completedAt: new Date().toISOString(),
+        tone: "success",
+        message: "Restored from backup-x.",
+      });
+
+      renderDesktopShell();
+
+      await waitFor(() => {
+        expect(toastSuccessMock).toHaveBeenCalledWith("Restored from backup-x.");
+      });
+    });
   });
 
   it("focuses an open window from the dock instead of closing it", async () => {

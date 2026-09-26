@@ -78,6 +78,16 @@ export const ALLOWED_BINARIES = {
 
 export type AllowedBinary = keyof typeof ALLOWED_BINARIES;
 
+/**
+ * Binaries that only those scripts reach, and that a feature still has to find
+ * before it offers itself. Node never runs one: checking for it runs `which`.
+ */
+export const SCRIPT_ONLY_BINARIES = {
+  psql: "the restore script's database load",
+} as const;
+
+export type ScriptOnlyBinary = keyof typeof SCRIPT_ONLY_BINARIES;
+
 export type RunOptions = {
   cwd?: string;
   /** Defaults to 60s. A command with no ceiling is a hung request. */
@@ -296,7 +306,7 @@ export function isCommandMissing(error: unknown): boolean {
  * were each calling `which` and interpreting the throw. This gives them one
  * answer to read.
  */
-export async function isAvailable(binary: AllowedBinary): Promise<boolean> {
+export async function isAvailable(binary: AllowedBinary | ScriptOnlyBinary): Promise<boolean> {
   return run("which", [binary], { timeoutMs: 5_000 })
     .then(({ stdout }) => stdout.trim().length > 0)
     .catch(() => false);

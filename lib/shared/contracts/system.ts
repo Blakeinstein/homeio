@@ -213,16 +213,50 @@ export type SystemBackupSummary = {
   status: "completed" | "failed";
 };
 
+/** Whether an action can work on this host, and if not, why not. */
+export type SystemFeatureAvailability = {
+  available: boolean;
+  reason: string | null;
+};
+
 export type SystemBackupListResponse = {
   settings: SystemBackupSettings;
   backups: SystemBackupSummary[];
   backupRoot: string;
+  availability: {
+    runNow: SystemFeatureAvailability;
+    restore: SystemFeatureAvailability;
+  };
 };
 
 export type SystemRestoreAcceptedResponse = {
   action: "restore";
   accepted: true;
   backupId: string;
+  /** Names this attempt, so the outcome read back later is this one's. */
+  restoreId: string;
+};
+
+/** The last step the restore script entered before it stopped. */
+export type SystemRestoreStep =
+  | "starting"
+  | "stopping"
+  | "extracting"
+  | "checking-dump"
+  | "rehearsing"
+  | "replacing-files"
+  | "loading-database"
+  | "restarting-apps";
+
+export type SystemRestoreOutcome = {
+  restoreId: string;
+  backupId: string;
+  status: "running" | "failed" | "completed";
+  step: SystemRestoreStep;
+  exitCode: number | null;
+  at: string;
+  /** What happened and what it touched, in words for the person. */
+  message: string;
 };
 
 export type SystemMetricsSnapshot = {

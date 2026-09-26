@@ -80,11 +80,17 @@ export function BackupSection({
   const selectedBackup =
     data.backups.find((b) => b.id === restoreBackupId) ?? data.backups[0] ?? null;
 
+  // What this host cannot do, in words. The Docker image has none of pg_dump,
+  // psql or systemd-run; both buttons used to be offered there and fail every
+  // time, with the reason in a banner scrolled out of view.
+  const runNowUnavailable =
+    data.availability?.runNow.available === false ? data.availability.runNow.reason : null;
+  const restoreUnavailable =
+    data.availability?.restore.available === false ? data.availability.restore.reason : null;
+
   return (
     <div className="flex flex-col gap-1">
       {data.settings.error && <InfoBanner text={data.settings.error} variant="warning" />}
-      {data.runNow.error && <InfoBanner text={data.runNow.error} variant="warning" />}
-      {data.restore.error && <InfoBanner text={data.restore.error} variant="warning" />}
 
       {/* ── Schedule ── */}
       <SectionDivider title="Schedule" />
@@ -158,33 +164,43 @@ export function BackupSection({
         <div className={cn(SETTINGS_PANEL_INSET, "flex items-center justify-between gap-4 px-4 py-3")}>
           <div className="min-w-0">
             <div className="text-sm text-foreground">Run backup now</div>
-            <div className="mt-0.5 text-2xs text-muted-foreground/70">Creates a full archive immediately</div>
+            <div className={cn("mt-0.5 text-2xs", runNowUnavailable ? "text-status-amber" : "text-muted-foreground/70")}>
+              {runNowUnavailable ?? "Creates a full archive immediately"}
+            </div>
           </div>
           <button
             onClick={() => void onRunBackupNow()}
-            disabled={capabilities.runNow.disabled || data.runNow.isPending}
-            title={capabilities.runNow.disabledReason}
+            disabled={capabilities.runNow.disabled || Boolean(runNowUnavailable) || data.runNow.isPending}
+            title={runNowUnavailable ?? capabilities.runNow.disabledReason}
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/25 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Upload className="size-3" />
             {data.runNow.isPending ? "Running…" : "Run now"}
           </button>
         </div>
+        {/* Next to the button that caused it, not at the top of the section. */}
+        {data.runNow.error && <InfoBanner text={data.runNow.error} variant="warning" />}
 
         <div className={cn(SETTINGS_PANEL_INSET, "flex items-center justify-between gap-4 px-4 py-3")}>
           <div className="min-w-0">
             <div className="text-sm text-foreground">Restore from backup</div>
-            <div className="mt-0.5 text-2xs text-muted-foreground/70">
-              {selectedBackup
-                ? `Selected: ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(selectedBackup.createdAt))}`
-                : "No backup selected"}
+            <div className={cn("mt-0.5 text-2xs", restoreUnavailable ? "text-status-amber" : "text-muted-foreground/70")}>
+              {restoreUnavailable ??
+                (selectedBackup
+                  ? `Selected: ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(selectedBackup.createdAt))}`
+                  : "No backup selected")}
             </div>
           </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <button
-                disabled={capabilities.restore.disabled || !selectedBackup || data.restore.isPending}
-                title={capabilities.restore.disabledReason}
+                disabled={
+                  capabilities.restore.disabled ||
+                  Boolean(restoreUnavailable) ||
+                  !selectedBackup ||
+                  data.restore.isPending
+                }
+                title={restoreUnavailable ?? capabilities.restore.disabledReason}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-glass-border bg-background/55 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Download className="size-3" />
@@ -200,6 +216,9 @@ export function BackupSection({
                     : "Select a backup first."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              {/* The dialog stays open on a failure, so the failure goes in it:
+                  outside, it was a banner nobody saw while they clicked again. */}
+              {data.restore.error && <InfoBanner text={data.restore.error} variant="warning" />}
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction

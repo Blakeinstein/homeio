@@ -8,6 +8,7 @@ import {
 import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
 import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { runSystemBackupNow } from "@/lib/server/modules/system/backup-service";
+import { isCommandMissing } from "@/lib/server/platform/process";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
@@ -59,6 +60,15 @@ export async function POST(request: NextRequest) {
       },
     );
   } catch (error) {
+    // A missing tool is a fact about this host, not a server fault: say which
+    // one, so the answer is "not here" rather than "try again".
+    if (isCommandMissing(error)) {
+      return NextResponse.json(
+        { error: (error as Error).message, code: "unavailable_on_host" },
+        { status: 409 },
+      );
+    }
+
     logServerAction({
       level: "error",
       layer: "api",
