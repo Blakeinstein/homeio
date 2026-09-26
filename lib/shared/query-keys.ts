@@ -49,4 +49,5 @@ export const queryKeys = {
   disks: ["system", "disks"] as const,
   serverInfo: ["system", "info"] as const,
   entitlements: ["licensing", "entitlements"] as const,
+  telemetrySettings: ["settings", "telemetry"] as const,
 };

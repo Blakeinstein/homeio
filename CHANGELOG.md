@@ -6,6 +6,127 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Anonymous usage stats, with public totals.** A minute after startup and then every 12 hours, a production server sends a random instance ID, the Homeio version, the CPU architecture and the OS to `https://homeio.app/api/stats`. Nothing else is sent, and the IP address is not stored. The counts are public at [homeio.app/stats](https://homeio.app/stats), so what is collected and what it shows are both visible. Turn it off in Settings → Advanced → Usage Stats, or with `HOMEIO_TELEMETRY=false`, which also locks the setting off.
+
+### Fixed
+
+- **The README described telemetry that no longer existed.** The PostHog startup ping was removed in 1.5.10, but the README and `.env.example` kept documenting it while the roadmap said there was none. All three now describe the stats ping above.
+
+---
+
+## [1.9.3] - 2026-09-16
+
+Also from [#37](https://github.com/doctor-io/homeio/issues/37), found because the reporter had created a second account on his own single-user server without meaning to.
+
+### Security
+
+- **A script-installed server reachable from the internet would create an account for anyone who asked.** Registration was gated on `usersExist && !AUTH_ALLOW_REGISTRATION` — an environment variable duplicating a fact the database already held — and `install.sh` wrote that variable as `true` and never turned it off. `.env.example` said `false`, which is why it went unnoticed; Docker installs defaulted closed and were never affected. There are no roles in Homeio, so a second account carries the same access as the first: terminal, files, Docker, disk operations, factory reset. The register *page* redirects away once an account exists, so the UI hid this; the API enforced nothing.
+
+  The variable is removed rather than corrected. The database decides: one account, and registration closes behind it.
+
+  **If you installed with `install.sh` and published your server**, check Settings → Users for accounts you did not create. Existing accounts keep working after this update — it only prevents new ones.
+
+---
+
+## [1.9.2] - 2026-09-16
+
+Issue [#37](https://github.com/doctor-io/homeio/issues/37): locked out on the
+registration page, on a server that already had an account.
+
+### Fixed
+
+#### Authentication behind a proxy or CDN
+
+- **A cache in front could lock everyone out of their own server.** The proxy set
+  no `Cache-Control` on its own responses, so a tunnel or CDN configured to cache
+  aggressively was free to keep them — including the `307 -> /register` an install
+  answers while it is still empty. Once that redirect was cached, every later
+  visitor was sent to registration however many accounts existed, and an
+  authenticated one had their session cookie cleared on the way back. Incognito,
+  another browser and another device all failed identically, because the cache sat
+  upstream of all three. Every non-static response now says `private, no-store`;
+  immutable assets never reach that middleware and keep their long-lived caching.
+  The documentation recommends putting Homeio behind exactly such a tunnel.
+- A failed "are there any accounts" lookup was read as "fresh install". A momentary
+  database or network hiccup therefore signed everyone out and offered the machine
+  up for registration. Not knowing now answers "accounts exist": a genuinely fresh
+  install pays one redirect to `/login`, where the old answer cost a running
+  install its sessions.
+
+#### Container logs
+
+- Containers that colour their output — most Node images, Uptime Kuma among them —
+  had their escape sequences printed as literal `[36m` and `[38;5;119m` noise, most
+  of the width of the pane. Worse, `\x1b[33mWARN:` leaves no word boundary before
+  WARN, so level detection missed it and the line fell through to the stderr badge:
+  every warning was labelled a red error. Escapes are stripped where the line is
+  parsed, so the level is read from clean text.
+
+---
+
+## [1.9.1] - 2026-09-14
+
+Issues [#31](https://github.com/doctor-io/homeio/issues/31), [#32](https://github.com/doctor-io/homeio/issues/32), [#33](https://github.com/doctor-io/homeio/issues/33) and [#35](https://github.com/doctor-io/homeio/issues/35), reported while migrating from CasaOS, plus the faults those reports turned up around them.
+
+### Added
+
+#### Cloudflare Tunnel
+
+- Publish an installed app on a public hostname from Settings → Integrations, without editing the tunnel's ingress by hand. Homeio creates the DNS record and the ingress rule through the Cloudflare API and keeps the catch-all rule last.
+- The connector token can be pasted as the whole `cloudflared service install eyJ…` command Cloudflare hands you — the token is extracted from it.
+- Tokens are validated before they are stored, so a token that cannot work is refused at the point of entry instead of failing silently later.
+- A saved token is masked and its field locked; editing is deliberate rather than accidental.
+
+#### Apps
+
+- An app's link can be set explicitly, for cases where the address Homeio would guess is not the one that reaches it — a tunnel hostname, a reverse proxy, a non-standard port ([#33](https://github.com/doctor-io/homeio/issues/33)).
+- Containers running on the host that Homeio did not deploy are listed on the desktop in a muted state, so the machine's real contents are visible in one place ([#31](https://github.com/doctor-io/homeio/issues/31)).
+- Custom app definitions imported from a compose file can be removed again.
+
+### Fixed
+
+#### Backup and restore
+
+- **Restoring a backup could empty the database and delete every backup on the machine**, then present the registration screen as though the install were new. The reset dropped only the `public` schema while the migration journal lives in `drizzle`, so the dump's own `CREATE SCHEMA drizzle` failed 25 lines in — with the wipe already committed. The reset and the reload now run as one transaction, the archive is checked for a database dump before anything is deleted, and the stored backups are excluded from the wipe.
+- A restore left the app stores the user had added behind: the registry lives beside the compose stacks rather than under the data root, and was never part of the archive. It is archived and restored now, and an older archive that does not carry one leaves the sources on disk alone.
+- A successful restore ended with no container running. `docker compose down` removes the containers, so nothing was left for a restart policy to revive, and the desktop's Start button could not recover it. The stacks are recreated before the reboot.
+
+#### App store
+
+- Adding or removing a store source could silently drop the others. Concurrent read-modify-write cycles on the registry overwrote each other, and a corrupt registry fell back to the official catalog without saying so ([#32](https://github.com/doctor-io/homeio/issues/32)).
+
+#### Integrations
+
+- A tunnel pointed at `localhost` returned 502 on any tunnel with more than one connector. The origin is now the LAN address, overridable with `HOMEIO_TUNNEL_ORIGIN_HOST`.
+- Tailscale asked again for details it already had; a connected node now says so instead of showing an empty form.
+
+#### Notifications
+
+- The list is ordered newest-first, and the ordering is applied to the merged list rather than to each half — persisted app events no longer sit above a status snapshot from seconds ago ([#35](https://github.com/doctor-io/homeio/issues/35)).
+
+#### Appearance
+
+- Changing the wallpaper re-downloaded the image twice on every switch; wallpapers are now cached for a year, which over a tunnel is the difference between a click doing nothing and a click working.
+- Reloading the page flashed the default wallpaper before the saved one appeared, and the crossfade was too fast to read as a transition.
+
+#### Docker image
+
+- **`docker compose up -d` did not start.** The compose file shipped `change-me-to-a-random-32-char-secret` as the session secret, which production explicitly refuses, so the quickstart in the README crash-looped on the instrumentation hook and answered 500 on `/api/health`. The entrypoint now generates a secret when none is supplied — as the Linux installer has always done — and keeps it in the stacks volume so sessions survive a restart.
+- The container had no `docker` CLI and could not reach the socket, so app management degraded silently. The CLI and compose plugin ship in the image, and the entrypoint detects the socket's group.
+
+#### Scripts
+
+- `uninstall.sh` re-enabled nginx's default vhost unconditionally, even on a run that removed nothing. Because that vhost listens with `default_server` and Homeio's does not, the server answered every request by IP with "Welcome to nginx!" while the app kept running — a live server taken off the air by a script that was supposed to have done nothing.
+- `uninstall.sh` crashed with `reply: unbound variable` when run non-interactively over SSH.
+
+### Security
+
+- Archive extraction rejects entries that escape their destination, disk wipes validate their target, and sign-in rate limiting now counts per account as well as per address, so a spread of source addresses still trips the lockout.
+
 ## [1.7.24] - 2026-07-02
 
 ### Added

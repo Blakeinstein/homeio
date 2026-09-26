@@ -23,5 +23,10 @@ export async function register() {
       "@/lib/server/modules/apps/health-service"
     );
     startAppHealthService();
+
+    const { startTelemetry } = await import(
+      "@/lib/server/modules/telemetry/service"
+    );
+    startTelemetry();
   }
 }

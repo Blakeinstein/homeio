@@ -130,6 +130,14 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === "true"),
+  HOMEIO_TELEMETRY: z
+    .string()
+    .optional()
+    .transform((value) => value !== "false"),
+  HOMEIO_TELEMETRY_URL: z
+    .string()
+    .url()
+    .default("https://homeio.app/api/stats"),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

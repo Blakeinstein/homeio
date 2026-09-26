@@ -138,7 +138,15 @@ async function hasUsersInDb(request: NextRequest) {
     if (authStatusCache) {
       return authStatusCache.hasUsers;
     }
-    return false;
+
+    // Not knowing is not the same as knowing there is nobody. Answering `false`
+    // here says "fresh install": the visitor is sent to registration, and an
+    // authenticated one has their session cookie cleared on the way — a
+    // momentary database or network hiccup logging everyone out and offering
+    // the machine up for registration. Assuming accounts exist costs a real
+    // fresh install one redirect to /login; the other way costs a running
+    // install its sessions.
+    return true;
   }
 }
 
@@ -160,16 +168,25 @@ function clearSessionCookie(response: NextResponse) {
  * Nothing this middleware touches may sit in a shared cache.
  *
  * Homeio is commonly published through a tunnel or a CDN — the docs recommend
- * exactly that — and one of those, configured to "cache everything", served a
- * six-day-old copy of the desktop shell to every visitor: the origin answered
- * `307 -> /login`, the edge answered a stale 200 whose script and stylesheet
- * hashes had been replaced by the next update, so eleven of its fourteen assets
- * 404'd and the page sat unstyled on "Loading session…" forever.
+ * exactly that — and a cache in front of it has already broken Homeio twice.
  *
- * An app that ships an updater cannot leave that to a proxy's defaults: every
- * release changes those hashes. Immutable assets are not affected — `_next/
- * static` never reaches this middleware, by the matcher below — so they keep
- * the long-lived caching that makes them worth caching.
+ * One, configured to "cache everything", served a six-day-old copy of the
+ * desktop shell to every visitor: the origin answered `307 -> /login`, the edge
+ * answered a stale 200 whose script and stylesheet hashes had been replaced by
+ * the next update, so eleven of its fourteen assets 404'd and the page sat
+ * unstyled on "Loading session…" forever. An app that ships an updater cannot
+ * leave that to a proxy's defaults: every release changes those hashes.
+ *
+ * The other kept a redirect. An install that was briefly empty answers
+ * `307 -> /register`; once that is cached, every later visitor is sent to
+ * registration no matter how many accounts exist, and the session cookie they
+ * just earned is thrown away on the way back. Incognito does not help, nor
+ * does another browser or another device: the cache is upstream of all of them,
+ * which is exactly what makes it look like a server-side bug.
+ *
+ * Immutable assets are unaffected — `_next/static` never reaches this
+ * middleware, by the matcher below — so they keep the long-lived caching that
+ * makes them worth caching.
  */
 function withoutSharedCaching(response: NextResponse) {
   response.headers.set("Cache-Control", "private, no-store");

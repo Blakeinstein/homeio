@@ -569,7 +569,7 @@ To set clear expectations for contributors and users:
 
 - **Not a NAS OS replacement** — Homeio manages applications and files but does not aim to replace TrueNAS, Unraid, or similar full NAS operating systems
 - **Not a Kubernetes orchestrator** — Docker Compose is the deployment target; Swarm/K8s orchestration is out of scope
-- **Not a cloud service** — everything runs locally; no Homeio cloud accounts, no data leaves your server. The one exception is a single anonymous startup ping (instance UUID, version, arch, OS platform) documented in the [README](./README.md#telemetry) and disabled with `HOMEIO_TELEMETRY=false`.
+- **Not a cloud service** — everything runs locally; no Homeio cloud accounts. The only outbound call is an opt-out anonymous stats ping (instance ID, version, arch, OS) whose totals are public at [homeio.app/stats](https://homeio.app/stats)
 
 ---
 
