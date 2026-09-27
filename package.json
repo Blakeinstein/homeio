@@ -1,9 +1,9 @@
 {
   "name": "homeio",
-  "version": "1.9.7",
+  "version": "1.10.0",
   "description": "Self-hosted home server dashboard — desktop-style UI for managing Docker apps, files, terminal, and system resources.",
   "author": "doctor-io",
-  "license": "BUSL-1.1",
+  "license": "AGPL-3.0-only",
   "homepage": "https://github.com/doctor-io/homeio",
   "repository": {
     "type": "git",
