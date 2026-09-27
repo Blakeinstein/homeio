@@ -1,5 +1,6 @@
 export const queryKeys = {
   systemMetrics: ["system", "metrics"] as const,
+  systemMetricsHistory: (range: string) => ["system", "metrics", "history", range] as const,
   systemPreferences: ["system", "preferences"] as const,
   systemUpdates: ["system", "updates"] as const,
   systemSecurity: ["system", "security"] as const,

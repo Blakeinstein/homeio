@@ -207,6 +207,26 @@ export type SystemRestoreAcceptedResponse = {
   backupId: string;
 };
 
+export type MetricsHistoryRange = "15m" | "1h" | "24h";
+
+/** One sample of the Monitor's history charts; null when the host has no reading. */
+export type MetricsHistoryPoint = {
+  /** Unix time in milliseconds. */
+  t: number;
+  cpuPercent: number | null;
+  memoryPercent: number | null;
+  temperatureCelsius: number | null;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+};
+
+export type MetricsHistory = {
+  range: MetricsHistoryRange;
+  /** Spacing between points: 5 s for 15m and 1h, 60 s (averages) for 24h. */
+  intervalSeconds: number;
+  points: MetricsHistoryPoint[];
+};
+
 export type SystemMetricsSnapshot = {
   timestamp: string;
   hostname: string;

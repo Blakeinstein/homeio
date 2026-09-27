@@ -1,11 +1,23 @@
 "use client";
 
 import { formatBytesCompact, formatUptimeShort } from "@/lib/client/format";
+import { hasAnyValue, seriesStats } from "@/lib/client/metrics-history";
 import {
   calculateDockerTotals,
   containerToProcess,
   getStatusBadgeColor,
 } from "@/lib/client/monitor-utils";
+import type { MetricsHistoryRange } from "@/lib/shared/contracts/system";
+import {
+  METRICS_HISTORY_RANGE_MS,
+  METRICS_HISTORY_SAMPLE_MS,
+  toHistoryPoint,
+} from "@/lib/shared/metrics-history";
+import { useMetricsHistory } from "@/modules/system/hooks/useMetricsHistory";
+import {
+  MetricHistoryChart,
+  type ChartSeries,
+} from "@/modules/system/components/metric-history-chart";
 import { useDockerStats } from "@/modules/system/hooks/useDockerStats";
 import { useSystemMetrics } from "@/modules/system/hooks/useSystemMetrics";
 import { DiskManager } from "@/modules/system/components/disk-manager";
@@ -21,9 +33,10 @@ import {
   MemoryStick,
   Network,
   Search,
+  Thermometer,
 } from "@/components/icons/platform-icons";
 import { PANEL_INSET } from "@/lib/ui/surface-tokens";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 
 type MonitorTab = "processes" | "network" | "disks";
@@ -66,42 +79,38 @@ function MetricCard({
   );
 }
 
-// ── History bars ──────────────────────────────────────────────────────────────
+// ── History card ──────────────────────────────────────────────────────────────
 
-function HistoryBars({ values, color }: { values: number[]; color: string }) {
-  return (
-    <div className={cn(PANEL_INSET, "flex h-10 items-end gap-px px-2 py-1.5")}>
-      {values.length === 0 ? (
-        <span className="m-auto text-xs text-muted-foreground/50">Collecting…</span>
-      ) : (
-        values.map((v, i) => (
-          <span
-            key={`${i}-${v}`}
-            className={cn("flex-1 rounded-[1px] transition-all duration-300", color)}
-            style={{ height: `${Math.max(4, Math.round(v))}%` }}
-          />
-        ))
-      )}
-    </div>
-  );
+const RANGE_OPTIONS: { id: MetricsHistoryRange; label: string }[] = [
+  { id: "15m", label: "15m" },
+  { id: "1h", label: "1h" },
+  { id: "24h", label: "24h" },
+];
+
+function formatPercent(value: number) {
+  return `${value.toFixed(1)}%`;
 }
 
-// ── Resource history card ─────────────────────────────────────────────────────
+function formatMbps(value: number) {
+  return `${value < 10 ? value.toFixed(2) : value.toFixed(1)} Mbps`;
+}
 
-function ResourceHistoryCard({
+function formatCelsius(value: number) {
+  return `${value.toFixed(0)} °C`;
+}
+
+function HistoryCard({
   icon: Icon,
   title,
   iconColor,
-  barColor,
-  history,
   rows,
+  children,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   iconColor: string;
-  barColor: string;
-  history: number[];
   rows: { label: string; value: string }[];
+  children: React.ReactNode;
 }) {
   return (
     <div className={cn(PANEL_INSET, "flex flex-col gap-2 p-3")}>
@@ -109,7 +118,7 @@ function ResourceHistoryCard({
         <Icon className={cn("size-3.5", iconColor)} />
         <span className="text-xs font-semibold text-foreground">{title}</span>
       </div>
-      <HistoryBars values={history} color={barColor} />
+      {children}
       <div className="divide-y divide-glass-border/40">
         {rows.map((r) => (
           <InfoRow key={r.label} label={r.label} value={r.value} mono />
@@ -136,31 +145,54 @@ export function Monitor() {
   const [tab, setTab] = useState<MonitorTab>("processes");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("cpu");
-  const [cpuHistory, setCpuHistory] = useState<number[]>([]);
-  const [memHistory, setMemHistory] = useState<number[]>([]);
-  const [peakCpu, setPeakCpu] = useState(0);
-  const [peakMem, setPeakMem] = useState(0);
+  const [range, setRange] = useState<MetricsHistoryRange>("15m");
 
   const { data: systemMetrics } = useSystemMetrics();
   const { stats: dockerStats, daemonAvailable, isConnected: dockerConnected } = useDockerStats();
 
   const dockerTotals = useMemo(() => calculateDockerTotals(dockerStats), [dockerStats]);
 
-  useEffect(() => {
-    if (!systemMetrics) return;
-    const cpu = systemMetrics.cpu.normalizedPercent ?? 0;
-    const mem = systemMetrics.memory.usedPercent ?? 0;
-    setCpuHistory((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1] === cpu) return prev;
-      return [...prev.slice(-59), cpu];
-    });
-    setMemHistory((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1] === mem) return prev;
-      return [...prev.slice(-59), mem];
-    });
-    setPeakCpu((prev) => Math.max(prev, cpu));
-    setPeakMem((prev) => Math.max(prev, mem));
-  }, [systemMetrics]);
+  const livePoint = useMemo(
+    () =>
+      systemMetrics ? toHistoryPoint(systemMetrics, Date.parse(systemMetrics.timestamp)) : null,
+    [systemMetrics],
+  );
+  const history = useMetricsHistory(range, livePoint);
+  // Re-rendered with every live frame, so the time axis keeps sliding.
+  const now = livePoint?.t ?? Date.now();
+  const rangeMs = METRICS_HISTORY_RANGE_MS[range];
+  const chartProps = {
+    points: history.points,
+    rangeMs,
+    now,
+    gapMs: Math.max(3 * history.intervalSeconds * 1000, 3 * METRICS_HISTORY_SAMPLE_MS),
+    rangeLabel: range === "15m" ? "15 min" : range === "1h" ? "1 h" : "24 h",
+    formatTime: (t: number) =>
+      new Date(t).toLocaleTimeString([], range === "24h"
+        ? { hour: "2-digit", minute: "2-digit" }
+        : { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+  };
+  const cpuStats = seriesStats(history.points, "cpuPercent");
+  const memoryStats = seriesStats(history.points, "memoryPercent");
+  const temperatureStats = seriesStats(history.points, "temperatureCelsius");
+  const downloadStats = seriesStats(history.points, "downloadMbps");
+  const liveTemperature = livePoint?.temperatureCelsius ?? null;
+  // A VM or a board without a sensor never reports one: leave the card out.
+  const showTemperature =
+    liveTemperature !== null || hasAnyValue(history.points, "temperatureCelsius");
+  const cpuSeries: ChartSeries[] = [{ key: "cpuPercent", label: "CPU", className: "text-primary" }];
+  const memorySeries: ChartSeries[] = [
+    { key: "memoryPercent", label: "Memory", className: "text-chart-2" },
+  ];
+  const temperatureSeries: ChartSeries[] = [
+    { key: "temperatureCelsius", label: "Temperature", className: "text-status-amber" },
+  ];
+  const networkSeries: ChartSeries[] = [
+    { key: "downloadMbps", label: "Down", className: "text-status-green" },
+    { key: "uploadMbps", label: "Up", className: "text-sky-400" },
+  ];
+  const orDash = (value: number | null, format: (v: number) => string) =>
+    value === null ? "--" : format(value);
 
   const dockerProcesses = useMemo(() => dockerStats.map(containerToProcess), [dockerStats]);
 
@@ -257,29 +289,80 @@ export function Monitor() {
           </div>
 
           {/* Resource charts */}
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+              History
+            </span>
+            <div className="flex items-center gap-0.5" role="group" aria-label="History range">
+              {RANGE_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setRange(option.id)}
+                  aria-pressed={range === option.id}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    range === option.id
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="mb-3 grid grid-cols-2 gap-2">
-            <ResourceHistoryCard
+            <HistoryCard
               icon={Cpu}
-              title="CPU History"
+              title="CPU"
               iconColor="text-primary"
-              barColor="bg-primary/80"
-              history={cpuHistory}
               rows={[
-                { label: "Current", value: `${systemMetrics?.cpu.normalizedPercent?.toFixed(1) ?? "--"}%` },
-                { label: "Peak", value: peakCpu > 0 ? `${peakCpu.toFixed(0)}%` : "--" },
+                { label: "Current", value: orDash(livePoint?.cpuPercent ?? null, formatPercent) },
+                { label: "Average", value: orDash(cpuStats.average, formatPercent) },
+                { label: "Peak", value: orDash(cpuStats.peak, formatPercent) },
               ]}
-            />
-            <ResourceHistoryCard
+            >
+              <MetricHistoryChart {...chartProps} series={cpuSeries} max={100} formatValue={formatPercent} />
+            </HistoryCard>
+            <HistoryCard
               icon={MemoryStick}
-              title="Memory Pressure"
+              title="Memory"
               iconColor="text-chart-2"
-              barColor="bg-chart-2/80"
-              history={memHistory}
               rows={[
-                { label: "Used %", value: `${systemMetrics?.memory.usedPercent?.toFixed(1) ?? "--"}%` },
-                { label: "Used", value: systemMetrics?.memory.usedBytes ? `${(systemMetrics.memory.usedBytes / 1024 ** 3).toFixed(1)} GB` : "--" },
+                { label: "Used", value: orDash(livePoint?.memoryPercent ?? null, formatPercent) },
+                { label: "Peak", value: orDash(memoryStats.peak, formatPercent) },
+                { label: "In use", value: systemMetrics?.memory.usedBytes ? `${(systemMetrics.memory.usedBytes / 1024 ** 3).toFixed(1)} GB` : "--" },
               ]}
-            />
+            >
+              <MetricHistoryChart {...chartProps} series={memorySeries} max={100} formatValue={formatPercent} />
+            </HistoryCard>
+            {showTemperature ? (
+              <HistoryCard
+                icon={Thermometer}
+                title="Temperature"
+                iconColor="text-status-amber"
+                rows={[
+                  { label: "Current", value: orDash(liveTemperature, formatCelsius) },
+                  { label: "Average", value: orDash(temperatureStats.average, formatCelsius) },
+                  { label: "Max", value: orDash(temperatureStats.peak, formatCelsius) },
+                ]}
+              >
+                <MetricHistoryChart {...chartProps} series={temperatureSeries} fitMin formatValue={formatCelsius} />
+              </HistoryCard>
+            ) : null}
+            <HistoryCard
+              icon={Network}
+              title="Network"
+              iconColor="text-status-green"
+              rows={[
+                { label: "Download", value: orDash(livePoint?.downloadMbps ?? null, formatMbps) },
+                { label: "Upload", value: orDash(livePoint?.uploadMbps ?? null, formatMbps) },
+                { label: "Peak download", value: orDash(downloadStats.peak, formatMbps) },
+              ]}
+            >
+              <MetricHistoryChart {...chartProps} series={networkSeries} formatValue={formatMbps} />
+            </HistoryCard>
 
             <div className={cn(PANEL_INSET, "flex flex-col gap-2 p-3")}>
               <div className="flex items-center gap-2">

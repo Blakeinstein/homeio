@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **The Monitor keeps an hour and a day of history.** CPU, memory, temperature and network (download and upload) are sampled every 5 seconds in the background, even with the Monitor closed, so opening or refreshing it shows the last **15 min** (the default) or **1 h** at full resolution, or the last **24 h** as one-minute averages. Until Homeio has been up for the whole range, the charts spread the history they have across their full width instead of filling in from one side. Each chart shows current, average and peak values and the reading under the pointer. The history lives in the server's memory: it survives page refreshes, not a Homeio restart, and the chart says since when it has data. The temperature chart is left out on machines without a sensor.
 - **A reminder above the dock when a Homeio update is available.** It shows the new version and the one installed, with **Update now**, **Details** (opens Settings → Updates) and **Later**, which hides it for an hour for that version; a newer version shows straight away. It follows the existing *Update notifications* setting, and is not shown on the lock screen or in demo mode. In the Docker image, where Homeio cannot update itself, it shows `docker compose pull && docker compose up -d` instead of an Update now button; the update status now reports this as `canSelfUpdate`.
 
 ### Security
