@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { createRequestId, logServerAction, withServerTiming } from "@/lib/server/logging/logger";
 import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
 import { authenticateSession } from "@/lib/server/modules/auth/service";
-import { listDisks } from "@/lib/server/modules/system/disk-service";
+import { getDiskInventory } from "@/lib/server/modules/system/disk-service";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
@@ -23,17 +23,17 @@ export async function GET(request: NextRequest) {
           return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const disks = await listDisks();
+        const inventory = await getDiskInventory();
 
         logServerAction({
           layer: "api",
           action: "system.disks.list.response",
-          status: "success",
+          status: inventory.unavailableReason ? "error" : "success",
           requestId,
-          message: `Listed ${disks.length} disk(s)`,
+          message: inventory.unavailableReason ?? `Listed ${inventory.disks.length} disk(s)`,
         });
 
-        return NextResponse.json({ data: { disks } });
+        return NextResponse.json({ data: inventory });
       },
     );
   } catch (error) {

@@ -28,6 +28,10 @@ export type DiskDevice = {
 
 export type DiskListResponse = {
   disks: DiskDevice[];
+  /** Why the list is empty when disks could not be read at all; null otherwise. */
+  unavailableReason: string | null;
+  /** In the Docker image disks can be listed but not formatted, partitioned or mounted. */
+  readOnly: boolean;
 };
 
 export const DISK_FILESYSTEMS = ["ext4", "ext3", "btrfs", "xfs", "ntfs", "vfat", "exfat"] as const;

@@ -7,9 +7,11 @@ import { promisify } from "node:util";
 import type {
   DiskDevice,
   DiskFilesystem,
+  DiskListResponse,
   DiskMediaType,
   DiskPartition,
 } from "@/lib/shared/contracts/disks";
+import { isContainerRuntime } from "@/lib/server/modules/system/update-service";
 
 const execFileAsync = promisify(execFile);
 
@@ -64,32 +66,56 @@ function mediaTypeFromDevice(dev: LsblkDevice): DiskMediaType {
 
 // ─── list ─────────────────────────────────────────────────────────────────────
 
-export async function listDisks(): Promise<DiskDevice[]> {
-  let stdout: string;
-  try {
-    const result = await execFileAsync("lsblk", [
-      "--json",
-      "--bytes",
-      "--output",
-      "NAME,MODEL,VENDOR,SERIAL,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINT,TRAN,RM,RO,ROTA,PARTTYPE",
-    ]);
-    stdout = result.stdout;
-  } catch {
-    return [];
-  }
+async function readLsblk(): Promise<LsblkOutput> {
+  const result = await execFileAsync("lsblk", [
+    "--json",
+    "--bytes",
+    "--output",
+    "NAME,MODEL,VENDOR,SERIAL,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINT,TRAN,RM,RO,ROTA,PARTTYPE",
+  ]);
+  return JSON.parse(result.stdout) as LsblkOutput;
+}
 
-  let parsed: LsblkOutput;
+function describeDiskListFailure(error: unknown) {
+  if (process.platform !== "linux") {
+    return `Disk management needs Linux; this machine runs ${process.platform}.`;
+  }
+  if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
+    return isContainerRuntime()
+      ? "lsblk is missing from this container image, so disks cannot be listed."
+      : "lsblk is not installed. Install util-linux (for example: sudo apt install util-linux) to list disks.";
+  }
+  return `Could not read the disk list: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+/** The disk list plus, when it could not be read, the reason, for the Disks tab. */
+export async function getDiskInventory(): Promise<DiskListResponse> {
+  const readOnly = isContainerRuntime();
   try {
-    parsed = JSON.parse(stdout) as LsblkOutput;
+    return { disks: parseDisks(await readLsblk()), unavailableReason: null, readOnly };
+  } catch (error) {
+    return { disks: [], unavailableReason: describeDiskListFailure(error), readOnly };
+  }
+}
+
+export async function listDisks(): Promise<DiskDevice[]> {
+  try {
+    return parseDisks(await readLsblk());
   } catch {
     return [];
   }
+}
+
+function parseDisks(parsed: LsblkOutput): DiskDevice[] {
 
   const disks: DiskDevice[] = [];
 
   for (const dev of parsed.blockdevices ?? []) {
     if (dev.type !== "disk") continue;
-    if (dev.name.startsWith("loop") || dev.name.startsWith("ram")) continue;
+    // Not disks you can store on: loop images, RAM disks, zram swap, and empty
+    // network block devices (nbd*), which lsblk lists at size 0.
+    if (/^(loop|ram|zram|nbd)/.test(dev.name)) continue;
+    if (!dev.size) continue;
 
     const partitions: DiskPartition[] = (dev.children ?? [])
       .filter((c) => c.type === "part" || c.type === "lvm" || c.type === "crypt")

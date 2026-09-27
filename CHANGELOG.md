@@ -34,6 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **The Monitor's Disks tab was always empty in the Docker image, and said nothing about why.** Disks are listed with `lsblk`, which the image did not include, and any failure was turned into an empty list. The image now ships `lsblk`, so Docker installs list the host's disks, read-only: formatting, partitioning, mounting and wiping are disabled there with a note that they need the script install. When disks cannot be listed at all, the tab now gives the reason (not Linux, `lsblk` missing). Empty network block devices and zram swap are no longer listed as disks.
 - **The in-app update installed `main` even on a server following another branch.** The check compared against `HOMEIO_REPO_BRANCH`, but `update.sh` ran without it and fell back to `main`, so the version offered and the version installed could differ.
 - **The README described telemetry that no longer existed.** The PostHog startup ping was removed in 1.5.10, but the README and `.env.example` kept documenting it while the roadmap said there was none. All three now describe the stats ping above.
 
