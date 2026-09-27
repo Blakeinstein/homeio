@@ -9,6 +9,7 @@ import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
 import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { deleteScheduledRebootArtifacts } from "@/lib/server/modules/system/power-schedule";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
+import { emitPowerAction } from "@/lib/server/modules/system/power-action-events";
 import {
   deleteFactoryResetArtifacts,
   scheduleFactoryReset,
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
         await deleteScheduledRebootArtifacts();
         await deleteFactoryResetArtifacts();
         await scheduleFactoryReset();
+        emitPowerAction("factory-reset");
 
         logServerAction({
           layer: "api",

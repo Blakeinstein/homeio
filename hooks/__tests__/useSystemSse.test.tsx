@@ -103,6 +103,59 @@ describe("useSystemSse", () => {
     expect(eventSource.close).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the recovery screen when another session starts a system action", () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    const client = createTestQueryClient();
+
+    const { result } = renderHook(() => useSystemSse(true), {
+      wrapper: createWrapper(client),
+    });
+
+    const eventSource = MockEventSource.instances[0];
+
+    act(() => {
+      eventSource.emit("system.power-action", {
+        action: "update",
+        startedAt: "2026-09-28T10:00:00.000Z",
+      });
+    });
+
+    const persisted = JSON.parse(localStorage.getItem("system.power.action.v1") ?? "null") as {
+      action: string;
+      startedAt: string;
+    } | null;
+    expect(persisted?.action).toBe("update");
+    // Timed from arrival, not from the server's clock.
+    expect(persisted?.startedAt).not.toBe("2026-09-28T10:00:00.000Z");
+    expect(result.current.status).toBe("disconnected");
+    expect(eventSource.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the action a tab already recorded for itself", () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    const client = createTestQueryClient();
+
+    renderHook(() => useSystemSse(true), {
+      wrapper: createWrapper(client),
+    });
+
+    const eventSource = MockEventSource.instances[0];
+    const own = JSON.stringify({ action: "reboot", startedAt: "2026-09-28T09:59:58.000Z" });
+    // Written without the change event, as another tab's write arrives.
+    localStorage.setItem("system.power.action.v1", own);
+
+    act(() => {
+      eventSource.emit("system.power-action", {
+        action: "reboot",
+        startedAt: "2026-09-28T10:00:00.000Z",
+      });
+    });
+
+    expect(localStorage.getItem("system.power.action.v1")).toBe(own);
+  });
+
   it("does not connect while a system action is active", () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     localStorage.setItem(

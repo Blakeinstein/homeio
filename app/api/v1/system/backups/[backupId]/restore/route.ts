@@ -8,6 +8,7 @@ import {
 import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
 import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { scheduleSystemBackupRestore } from "@/lib/server/modules/system/backup-service";
+import { emitPowerAction } from "@/lib/server/modules/system/power-action-events";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
@@ -36,6 +37,7 @@ export async function POST(request: NextRequest,
 
         try {
           const accepted = await scheduleSystemBackupRestore(backupId);
+          emitPowerAction("restore");
 
           logServerAction({
             layer: "api",

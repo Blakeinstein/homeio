@@ -251,7 +251,17 @@ export type SystemMetricsSnapshot = {
   };
 };
 
+export type SystemPowerAction = "reboot" | "shutdown" | "factory-reset" | "restore" | "update";
+
+// Sent to every open desktop when one session starts an action that takes
+// Homeio down, so they all switch to the recovery screen instead of just
+// losing the connection.
+export type SystemPowerActionEvent = {
+  action: SystemPowerAction;
+  startedAt: string;
+};
+
 export type SystemStreamEvent = {
-  type: "metrics.updated" | "heartbeat";
-  data: SystemMetricsSnapshot | { timestamp: string };
+  type: "metrics.updated" | "heartbeat" | "system.power-action";
+  data: SystemMetricsSnapshot | { timestamp: string } | SystemPowerActionEvent;
 };

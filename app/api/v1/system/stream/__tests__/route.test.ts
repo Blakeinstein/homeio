@@ -65,6 +65,7 @@ vi.mock("@/lib/server/modules/system/service", () => ({
 }));
 
 import { GET } from "@/app/api/v1/system/stream/route";
+import { emitPowerAction } from "@/lib/server/modules/system/power-action-events";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 describe("GET /api/v1/system/stream", () => {
@@ -104,5 +105,38 @@ describe("GET /api/v1/system/stream", () => {
 
     controller.abort();
     await reader?.cancel();
+  });
+
+  it("tells every open stream when a session starts a system action", async () => {
+    const controller = new AbortController();
+    const response = await GET(
+      new Request("http://localhost/api/v1/system/stream", { signal: controller.signal }),
+    );
+    const reader = response.body?.getReader();
+    await reader?.read(); // initial metrics frame
+
+    emitPowerAction("update");
+
+    const chunk = await reader?.read();
+    const text = new TextDecoder().decode(chunk?.value);
+
+    expect(text).toContain("event: system.power-action");
+    expect(text).toContain('"action":"update"');
+
+    controller.abort();
+    await reader?.cancel();
+  });
+
+  it("stops forwarding system actions once the stream closes", async () => {
+    const controller = new AbortController();
+    const response = await GET(
+      new Request("http://localhost/api/v1/system/stream", { signal: controller.signal }),
+    );
+
+    controller.abort();
+
+    expect(() => emitPowerAction("reboot")).not.toThrow();
+    expect(globalThis.__homeioPowerActionSubscribers?.size).toBe(0);
+    await response.body?.cancel().catch(() => undefined);
   });
 });

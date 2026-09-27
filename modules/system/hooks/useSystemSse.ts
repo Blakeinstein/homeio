@@ -3,8 +3,12 @@
 import {
   POWER_ACTION_STATE_CHANGED_EVENT,
   readPersistedPowerActionState,
+  writePersistedPowerActionState,
 } from "@/lib/desktop/reboot-state";
-import type { SystemMetricsSnapshot } from "@/lib/shared/contracts/system";
+import type {
+  SystemMetricsSnapshot,
+  SystemPowerActionEvent,
+} from "@/lib/shared/contracts/system";
 import { queryKeys } from "@/lib/shared/query-keys";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -78,15 +82,36 @@ export function useSystemSse(enabled = true) {
       queryClient.setQueryData(queryKeys.systemMetrics, parsed);
     };
 
+    // Another session started a reboot, update, restore... Show the same
+    // recovery screen that session shows. Time it from arrival rather than the
+    // server's startedAt, which a skewed client clock would misread.
+    const powerActionListener = (event: MessageEvent) => {
+      let payload: SystemPowerActionEvent;
+      try {
+        payload = JSON.parse(event.data) as SystemPowerActionEvent;
+      } catch {
+        return;
+      }
+
+      if (readPersistedPowerActionState(window.localStorage)) return;
+
+      writePersistedPowerActionState(window.localStorage, {
+        action: payload.action,
+        startedAt: new Date().toISOString(),
+      });
+    };
+
     const errorListener = () => {
       setStatus("disconnected");
     };
 
     eventSource.addEventListener("metrics.updated", metricsListener);
+    eventSource.addEventListener("system.power-action", powerActionListener);
     eventSource.addEventListener("error", errorListener);
 
     return () => {
       eventSource.removeEventListener("metrics.updated", metricsListener);
+      eventSource.removeEventListener("system.power-action", powerActionListener);
       eventSource.removeEventListener("error", errorListener);
       eventSource.close();
       setStatus("disconnected");

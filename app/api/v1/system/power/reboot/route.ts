@@ -8,6 +8,7 @@ import {
 import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
 import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { scheduleSystemReboot } from "@/lib/server/modules/system/power-service";
+import { emitPowerAction } from "@/lib/server/modules/system/power-action-events";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
         });
 
         await scheduleSystemReboot();
+        emitPowerAction("reboot");
 
         logServerAction({
           layer: "api",

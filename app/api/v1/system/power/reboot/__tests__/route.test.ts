@@ -9,9 +9,14 @@ vi.mock("@/lib/server/modules/system/power-service", () => ({
   scheduleSystemReboot: vi.fn(),
 }));
 
+vi.mock("@/lib/server/modules/system/power-action-events", () => ({
+  emitPowerAction: vi.fn(),
+}));
+
 import { POST } from "@/app/api/v1/system/power/reboot/route";
 import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { scheduleSystemReboot } from "@/lib/server/modules/system/power-service";
+import { emitPowerAction } from "@/lib/server/modules/system/power-action-events";
 
 describe("POST /api/v1/system/power/reboot", () => {
   it("returns 202 and schedules reboot for authenticated users", async () => {
@@ -42,6 +47,8 @@ describe("POST /api/v1/system/power/reboot", () => {
       accepted: true,
     });
     expect(scheduleSystemReboot).toHaveBeenCalledOnce();
+    // Other open sessions switch to the reboot screen too.
+    expect(emitPowerAction).toHaveBeenCalledWith("reboot");
   });
 
   it("returns 401 when the session is missing or invalid", async () => {
@@ -58,6 +65,7 @@ describe("POST /api/v1/system/power/reboot", () => {
   });
 
   it("returns 500 when reboot scheduling fails", async () => {
+    vi.mocked(emitPowerAction).mockClear();
     vi.mocked(authenticateSession).mockResolvedValueOnce({
       sessionId: "s1",
       userId: "u1",
@@ -81,5 +89,6 @@ describe("POST /api/v1/system/power/reboot", () => {
 
     expect(response.status).toBe(500);
     expect(json.error).toBe("Failed to schedule reboot");
+    expect(emitPowerAction).not.toHaveBeenCalled();
   });
 });
