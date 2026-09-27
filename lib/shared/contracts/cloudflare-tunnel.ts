@@ -16,12 +16,23 @@ export type CloudflareTunnelConfigSaveRequest = {
   apiToken?: string;
 };
 
+/** A cloudflared container on this host that is not Homeio's own connector. */
+export type CloudflareOtherConnector = {
+  name: string;
+  running: boolean;
+  /** True when it serves the tunnel Homeio is configured for; null when its token cannot be read. */
+  sameTunnel: boolean | null;
+};
+
 /** Whether the cloudflared connector is actually up. */
 export type CloudflareTunnelStatus = {
   installed: boolean;
   running: boolean;
   state: string | null;
   error: string | null;
+  /** The container Homeio runs the connector in. */
+  containerName: string;
+  otherConnectors: CloudflareOtherConnector[];
 };
 
 /** One installed app as offered in the "expose through the tunnel" list. */

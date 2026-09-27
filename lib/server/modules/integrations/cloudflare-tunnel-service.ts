@@ -3,14 +3,27 @@ import "server-only";
 import { request } from "node:http";
 import { serverEnv } from "@/lib/server/env";
 import { logServerAction } from "@/lib/server/logging/logger";
-import type { CloudflareTunnelStatus } from "@/lib/shared/contracts/cloudflare-tunnel";
+import { getCloudflareTunnelConfig } from "@/lib/server/modules/integrations/cloudflare-tunnel-config";
+import {
+  CLOUDFLARE_TUNNEL_COMPONENT,
+  CLOUDFLARED_CONTAINER_NAME,
+  HOMEIO_COMPONENT_LABEL,
+  connectorTokenOf,
+  homeioComponentOf,
+  isCloudflaredContainer,
+  tunnelIdOf,
+} from "@/lib/server/modules/integrations/cloudflared-connectors";
+import type {
+  CloudflareOtherConnector,
+  CloudflareTunnelStatus,
+} from "@/lib/shared/contracts/cloudflare-tunnel";
 
 /**
  * cloudflared runs as a container rather than a host package: Homeio already
  * has the Docker socket, and `tunnel run --token` is exactly what Cloudflare's
  * dashboard hands out. No distro-specific install, no /dev/net/tun.
  */
-const CONTAINER_NAME = "homeio-cloudflared";
+const CONTAINER_NAME = CLOUDFLARED_CONTAINER_NAME;
 const IMAGE = "cloudflare/cloudflared:latest";
 
 type DockerResponse = { statusCode: number; body: string };
@@ -64,7 +77,9 @@ function toError(action: string, response: DockerResponse) {
   return new Error(`${action} failed (${response.statusCode}): ${response.body.slice(0, 300)}`);
 }
 
-export async function getCloudflareTunnelStatus(): Promise<CloudflareTunnelStatus> {
+type ConnectorState = Omit<CloudflareTunnelStatus, "containerName" | "otherConnectors">;
+
+async function getConnectorState(): Promise<ConnectorState> {
   try {
     const response = await dockerCall(`/containers/${CONTAINER_NAME}/json`, {
       timeoutMs: 10_000,
@@ -101,6 +116,58 @@ export async function getCloudflareTunnelStatus(): Promise<CloudflareTunnelStatu
       error: error instanceof Error ? error.message : "Could not reach the Docker daemon",
     };
   }
+}
+
+type ContainerListEntry = {
+  Id: string;
+  Names?: string[];
+  Image?: string;
+  Command?: string;
+  State?: string;
+  Labels?: Record<string, string>;
+};
+
+/**
+ * cloudflared containers the user runs themselves (a store app, a bare
+ * `docker run`). One on the same tunnel is a second replica: Cloudflare splits
+ * traffic between the two, and requests fail whenever it lands on one that
+ * cannot reach the apps.
+ */
+async function findOtherConnectors(): Promise<CloudflareOtherConnector[]> {
+  try {
+    const listed = await dockerCall("/containers/json?all=true", { timeoutMs: 10_000 });
+    if (failed(listed)) return [];
+
+    const others = (JSON.parse(listed.body) as ContainerListEntry[]).filter(
+      (container) => isCloudflaredContainer(container) && homeioComponentOf(container) === null,
+    );
+    if (others.length === 0) return [];
+
+    const ownTunnel = tunnelIdOf((await getCloudflareTunnelConfig().catch(() => null))?.token);
+
+    return Promise.all(
+      others.map(async (container) => {
+        const inspected = await dockerCall(`/containers/${container.Id}/json`, { timeoutMs: 10_000 });
+        const config = failed(inspected)
+          ? {}
+          : ((JSON.parse(inspected.body) as { Config?: { Cmd?: string[]; Env?: string[] } }).Config ?? {});
+        const theirTunnel = tunnelIdOf(connectorTokenOf(config));
+
+        return {
+          name: container.Names?.[0]?.replace(/^\//, "") || container.Id.slice(0, 12),
+          running: container.State === "running",
+          sameTunnel: ownTunnel && theirTunnel ? ownTunnel === theirTunnel : null,
+        };
+      }),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function getCloudflareTunnelStatus(): Promise<CloudflareTunnelStatus> {
+  const [state, otherConnectors] = await Promise.all([getConnectorState(), findOtherConnectors()]);
+  return { ...state, containerName: CONTAINER_NAME, otherConnectors };
 }
 
 async function removeExistingContainer() {
@@ -144,6 +211,8 @@ export async function activateCloudflareTunnel(token: string): Promise<Cloudflar
     body: {
       Image: IMAGE,
       Cmd: ["tunnel", "--no-autoupdate", "run", "--token", trimmed],
+      // Marks it as part of Homeio, not an app: kept off the desktop.
+      Labels: { [HOMEIO_COMPONENT_LABEL]: CLOUDFLARE_TUNNEL_COMPONENT },
       HostConfig: {
         NetworkMode: "host",
         RestartPolicy: { Name: "unless-stopped" },
