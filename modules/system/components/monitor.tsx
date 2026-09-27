@@ -14,6 +14,11 @@ import {
   toHistoryPoint,
 } from "@/lib/shared/metrics-history";
 import { useMetricsHistory } from "@/modules/system/hooks/useMetricsHistory";
+import { useNetworkOverview } from "@/modules/system/hooks/useNetworkOverview";
+import {
+  NetworkInterfaceCard,
+  formatMbps,
+} from "@/modules/system/components/network-interface-card";
 import {
   MetricHistoryChart,
   type ChartSeries,
@@ -29,9 +34,11 @@ import {
   Container,
   Cpu,
   Gauge,
+  Globe,
   HardDrive,
   MemoryStick,
   Network,
+  Router,
   Search,
   Thermometer,
 } from "@/components/icons/platform-icons";
@@ -73,7 +80,9 @@ function MetricCard({
           <Icon className="size-3" />
         </div>
       </div>
-      <div className="font-mono text-2xl font-bold tabular-nums text-foreground">{value}</div>
+      <div className="truncate font-mono text-2xl font-bold tabular-nums text-foreground" title={value}>
+        {value}
+      </div>
       <div className="text-[11px] text-muted-foreground/70">{sub}</div>
     </div>
   );
@@ -91,12 +100,37 @@ function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
 }
 
-function formatMbps(value: number) {
-  return `${value < 10 ? value.toFixed(2) : value.toFixed(1)} Mbps`;
-}
-
 function formatCelsius(value: number) {
   return `${value.toFixed(0)} °C`;
+}
+
+function RangeSwitch({
+  range,
+  onChange,
+}: {
+  range: MetricsHistoryRange;
+  onChange: (range: MetricsHistoryRange) => void;
+}) {
+  return (
+    <div className="flex items-center gap-0.5" role="group" aria-label="History range">
+      {RANGE_OPTIONS.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          onClick={() => onChange(option.id)}
+          aria-pressed={range === option.id}
+          className={cn(
+            "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+            range === option.id
+              ? "bg-primary/15 text-primary"
+              : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function HistoryCard({
@@ -194,6 +228,9 @@ export function Monitor() {
     now,
     gapMs: Math.max(3 * history.intervalSeconds * 1000, 3 * METRICS_HISTORY_SAMPLE_MS),
     rangeLabel: range === "15m" ? "15 min" : range === "1h" ? "1 h" : "24 h",
+    // 15 min fills the width from the first sample; 1 h and 24 h keep their
+    // real scale so the three views are told apart.
+    fitToData: range === "15m",
     formatTime: (t: number) =>
       new Date(t).toLocaleTimeString([], range === "24h"
         ? { hour: "2-digit", minute: "2-digit" }
@@ -203,6 +240,21 @@ export function Monitor() {
   const memoryStats = seriesStats(history.points, "memoryPercent");
   const temperatureStats = seriesStats(history.points, "temperatureCelsius");
   const downloadStats = seriesStats(history.points, "downloadMbps");
+  const uploadStats = seriesStats(history.points, "uploadMbps");
+  const network = useNetworkOverview(tab === "network");
+  const interfaces = network.data?.interfaces ?? [];
+  // Up with an address, or carrying the default route: the ones worth a card.
+  // The rest (unplugged ports, OS plumbing) are listed in one line each.
+  // An IPv6 link-local address (fe80::) is on every interface and says nothing.
+  const activeInterfaces = interfaces.filter(
+    (iface) =>
+      iface.isDefault ||
+      (iface.up === true &&
+        (iface.ip4 !== null || (iface.ip6 !== null && !iface.ip6.toLowerCase().startsWith("fe80")))),
+  );
+  const otherInterfaces = interfaces.filter((iface) => !activeInterfaces.includes(iface));
+  const defaultInterface = interfaces.find((iface) => iface.isDefault) ?? null;
+  const dnsServers = network.data?.dnsServers ?? [];
   const liveTemperature = livePoint?.temperatureCelsius ?? null;
   // A VM or a board without a sensor never reports one: leave the card out.
   const showTemperature =
@@ -320,24 +372,7 @@ export function Monitor() {
             <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
               History
             </span>
-            <div className="flex items-center gap-0.5" role="group" aria-label="History range">
-              {RANGE_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setRange(option.id)}
-                  aria-pressed={range === option.id}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
-                    range === option.id
-                      ? "bg-primary/15 text-primary"
-                      : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+            <RangeSwitch range={range} onChange={setRange} />
           </div>
           <div className="mb-3 grid grid-cols-2 gap-2">
             <HistoryCard
@@ -509,37 +544,120 @@ export function Monitor() {
       {tab === "network" && (
         <div className="flex-1 overflow-y-auto p-3">
           <div className="flex flex-col gap-2">
-            {systemMetrics?.wifi.connected ? (
-              <div className={cn(PANEL_INSET, "overflow-hidden")}>
-                <div className="flex items-center justify-between px-4 py-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-glass-border bg-background/55">
-                      <Network className="size-3.5 text-primary" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{systemMetrics.wifi.iface ?? "Network"}</p>
-                      <p className="text-[11px] text-muted-foreground/70">
-                        {systemMetrics.wifi.ssid ?? "Connected"} · {systemMetrics.wifi.ipv4 ?? "No IP"}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="rounded-md bg-status-green/12 px-2 py-0.5 text-xs font-medium text-status-green">
-                    Connected
-                  </span>
-                </div>
-                <div className="divide-y divide-glass-border/40 border-t border-glass-border/50 px-4">
-                  <InfoRow label="Download" value={`${systemMetrics.wifi.downloadMbps?.toFixed(1) ?? "--"} Mbps`} mono />
-                  <InfoRow label="Upload" value={`${systemMetrics.wifi.uploadMbps?.toFixed(1) ?? "--"} Mbps`} mono />
-                  <InfoRow label="Signal" value={`${systemMetrics.wifi.signalPercent ?? "--"}%`} mono />
-                  <InfoRow label="TX Rate" value={`${systemMetrics.wifi.txRateMbps?.toFixed(0) ?? "--"} Mbps`} mono />
-                </div>
-              </div>
+            <div className="grid grid-cols-4 gap-2">
+              <MetricCard
+                label="Download"
+                icon={ArrowDown}
+                value={orDash(livePoint?.downloadMbps ?? null, (v) => v.toFixed(2))}
+                sub="Mbps now"
+                color="text-status-green"
+              />
+              <MetricCard
+                label="Upload"
+                icon={ArrowUp}
+                value={orDash(livePoint?.uploadMbps ?? null, (v) => v.toFixed(2))}
+                sub="Mbps now"
+                color="text-sky-400"
+              />
+              <MetricCard
+                label="Gateway"
+                icon={Router}
+                value={network.data?.gateway ?? "--"}
+                sub={defaultInterface ? `via ${defaultInterface.iface}` : "No default route"}
+                color="text-primary"
+              />
+              <MetricCard
+                label="DNS"
+                icon={Globe}
+                value={dnsServers[0] ?? "--"}
+                sub={
+                  dnsServers.length > 1
+                    ? `+ ${dnsServers.slice(1).join(", ")}`
+                    : dnsServers.length === 1
+                      ? "1 server"
+                      : "None found"
+                }
+                color="text-chart-4"
+              />
+            </div>
+
+            {network.data?.inContainer ? (
+              <p className={cn(PANEL_INSET, "px-4 py-2.5 text-xs text-muted-foreground")}>
+                Homeio runs in Docker, so these are the container&apos;s interfaces, gateway and DNS, not the
+                host&apos;s. Run it with <code className="font-mono text-foreground/80">network_mode: host</code> to
+                see the host network.
+              </p>
+            ) : null}
+
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                Throughput
+              </span>
+              <RangeSwitch range={range} onChange={setRange} />
+            </div>
+            <HistoryCard
+              icon={Network}
+              title={defaultInterface ? `Default interface · ${defaultInterface.iface}` : "Default interface"}
+              iconColor="text-status-green"
+              rows={[
+                { label: "Peak download", value: orDash(downloadStats.peak, formatMbps) },
+                { label: "Peak upload", value: orDash(uploadStats.peak, formatMbps) },
+                { label: "Average download", value: orDash(downloadStats.average, formatMbps) },
+              ]}
+            >
+              <MetricHistoryChart {...chartProps} series={networkSeries} formatValue={formatMbps} />
+            </HistoryCard>
+
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                Interfaces{activeInterfaces.length > 0 ? ` · ${activeInterfaces.length} active` : ""}
+              </span>
+            </div>
+            {network.isLoading ? (
+              <p className={cn(PANEL_INSET, "px-4 py-4 text-xs text-muted-foreground/60")}>Loading interfaces…</p>
+            ) : network.error ? (
+              <p className={cn(PANEL_INSET, "px-4 py-4 text-xs text-status-amber")}>
+                {network.error instanceof Error ? network.error.message : "Could not load network interfaces"}
+              </p>
+            ) : activeInterfaces.length === 0 ? (
+              <p className={cn(PANEL_INSET, "px-4 py-4 text-xs text-muted-foreground/60")}>No active network interface</p>
             ) : (
-              <div className={cn(PANEL_INSET, "flex flex-col items-center gap-2 py-8 text-center")}>
-                <Network className="size-7 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No active network connection</p>
+              <div className="grid grid-cols-2 gap-2">
+                {activeInterfaces.map((iface) => (
+                  <NetworkInterfaceCard
+                    key={iface.iface}
+                    iface={iface}
+                    wifi={
+                      iface.kind === "wireless" &&
+                      systemMetrics?.wifi.connected &&
+                      systemMetrics.wifi.iface === iface.iface
+                        ? { ssid: systemMetrics.wifi.ssid, signalPercent: systemMetrics.wifi.signalPercent }
+                        : null
+                    }
+                  />
+                ))}
               </div>
             )}
+            {otherInterfaces.length > 0 ? (
+              <details className={cn(PANEL_INSET, "group px-4 py-2.5")}>
+                <summary className="cursor-pointer list-none text-xs text-muted-foreground hover:text-foreground">
+                  <span className="mr-1.5 inline-block transition-transform group-open:rotate-90">›</span>
+                  {otherInterfaces.length} other interface{otherInterfaces.length > 1 ? "s" : ""} (down or without an address)
+                </summary>
+                <div className="mt-2 divide-y divide-glass-border/40">
+                  {otherInterfaces.map((iface) => (
+                    <div key={iface.iface} className="flex items-center justify-between py-1.5 text-xs">
+                      <span className="font-mono text-foreground/80">{iface.iface}</span>
+                      <span className="text-muted-foreground/70">
+                        {iface.kind === "wireless" ? "Wi-Fi" : iface.kind === "vpn" ? "VPN" : iface.kind === "wired" ? "Wired" : "Other"}
+                        {" · "}
+                        {iface.up === true ? "up, no address" : iface.up === false ? "down" : "unknown"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
 
             <div className={cn(PANEL_INSET, "overflow-hidden")}>
               <div className="flex items-center gap-2 border-b border-glass-border/50 px-4 py-3">

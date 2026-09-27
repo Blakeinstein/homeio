@@ -12,7 +12,7 @@ function point(t: number, cpu: number | null): MetricsHistoryPoint {
   return { t, cpuPercent: cpu, memoryPercent: null, temperatureCelsius: null, downloadMbps: null, uploadMbps: null };
 }
 
-function renderChart(points: MetricsHistoryPoint[]) {
+function renderChart(points: MetricsHistoryPoint[], { fitToData = false } = {}) {
   return render(
     <MetricHistoryChart
       points={points}
@@ -24,6 +24,7 @@ function renderChart(points: MetricsHistoryPoint[]) {
       rangeLabel="1 h"
       formatValue={(v) => `${v.toFixed(1)}%`}
       formatTime={(t) => new Date(t).toISOString().slice(11, 19)}
+      fitToData={fitToData}
     />,
   );
 }
@@ -53,22 +54,35 @@ describe("MetricHistoryChart", () => {
       point(NOW - 10 * 60_000, 30),
       point(NOW - 10 * 60_000 + 5_000, 32),
     ];
-    const { container } = renderChart(points);
+    const { container } = renderChart(points, { fitToData: true });
 
     const line = container.querySelectorAll("path")[1].getAttribute("d") ?? "";
     expect(line.match(/M/g)).toHaveLength(2);
     expect(screen.getByText(`Since ${new Date(NOW - 20 * 60_000).toISOString().slice(11, 19)}`)).toBeTruthy();
   });
 
-  it("spreads a short history across the full width instead of starting empty", () => {
+  it("spreads a short history across the full width in the 15 min view", () => {
     // Two minutes of data in a one-hour chart.
     const points = Array.from({ length: 24 }, (_, i) => point(NOW - 120_000 + (i + 1) * 5_000, 50));
-    const { container } = renderChart(points);
+    const { container } = renderChart(points, { fitToData: true });
 
     const line = container.querySelectorAll("path")[1].getAttribute("d") ?? "";
     const xs = [...line.matchAll(/[ML](-?[\d.]+),/g)].map((m) => Number(m[1]));
     expect(Math.min(...xs)).toBeLessThan(15);
     expect(Math.max(...xs)).toBeCloseTo(300, 0);
+  });
+
+  it("keeps the real time scale for 1 h and greys out the part with no data yet", () => {
+    const points = Array.from({ length: 24 }, (_, i) => point(NOW - 120_000 + (i + 1) * 5_000, 50));
+    const { container } = renderChart(points);
+
+    const line = container.querySelectorAll("path")[1].getAttribute("d") ?? "";
+    const xs = [...line.matchAll(/[ML](-?[\d.]+),/g)].map((m) => Number(m[1]));
+    // Two minutes of an hour: the last thirtieth of the width.
+    expect(Math.min(...xs)).toBeGreaterThan(285);
+    expect(Math.max(...xs)).toBeCloseTo(300, 0);
+    expect(screen.getByText("No data yet")).toBeTruthy();
+    expect(screen.getByText(/^1 h ago · data since /)).toBeTruthy();
   });
 
   it("shows the nearest reading on hover", () => {

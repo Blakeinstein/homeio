@@ -30,6 +30,12 @@ type MetricHistoryChartProps = {
   formatValue: (value: number) => string;
   formatTime: (t: number) => string;
   rangeLabel: string;
+  /**
+   * Spread a history shorter than the range across the whole width (the 15 min
+   * view). Otherwise the chart keeps the real time scale and greys out the
+   * part the server has no data for yet, so 1 h and 24 h look different.
+   */
+  fitToData?: boolean;
 };
 
 type Segment = { x: number; y: number }[];
@@ -94,6 +100,7 @@ export function MetricHistoryChart({
   formatValue,
   formatTime,
   rangeLabel,
+  fitToData = false,
 }: MetricHistoryChartProps) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const firstT = points[0]?.t;
@@ -101,10 +108,8 @@ export function MetricHistoryChart({
   // start of its minute, so ending at "now" left an empty strip on the right.
   const end = points.at(-1)?.t ?? now;
   const rangeStart = end - rangeMs;
-  // Until the server has a full range, spread what it has across the width
-  // instead of drawing a mostly empty chart that fills in bar by bar.
   const partial = firstT !== undefined && firstT - rangeStart > 2 * gapMs;
-  const start = partial && firstT !== undefined ? firstT : rangeStart;
+  const start = fitToData && partial && firstT !== undefined ? firstT : rangeStart;
   const span = Math.max(end - start, 1);
 
   const scale = useMemo(() => {
@@ -149,42 +154,54 @@ export function MetricHistoryChart({
             Collecting…
           </span>
         ) : (
-          <svg
-            viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-            preserveAspectRatio="none"
-            className="absolute inset-0 size-full"
-            role="img"
-            aria-label={`${series.map((s) => s.label).join(" and ")} over the last ${rangeLabel}`}
-          >
-            {series.map((s) => {
-              const segments = buildSegments(points, s.key, toX, toY, gapMs);
-              return (
-                <g key={s.key} className={s.className}>
-                  <path d={areaPath(segments)} fill="currentColor" fillOpacity={0.12} />
-                  <path
-                    d={linePath(segments)}
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
-                    strokeLinejoin="round"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                </g>
-              );
-            })}
-            {hovered ? (
-              <line
-                x1={toX(hovered.t)}
-                x2={toX(hovered.t)}
-                y1={0}
-                y2={HEIGHT}
-                className="text-foreground/40"
-                stroke="currentColor"
-                strokeWidth={1}
-                vectorEffect="non-scaling-stroke"
-              />
+          <>
+            {!fitToData && partial && firstT !== undefined ? (
+              <div
+                className="absolute inset-y-0 left-0 flex items-center justify-center overflow-hidden border-r border-dashed border-glass-border/60 bg-[repeating-linear-gradient(135deg,transparent_0_6px,hsl(var(--foreground)/0.04)_6px_12px)]"
+                style={{ width: `${(toX(firstT) / WIDTH) * 100}%` }}
+              >
+                {toX(firstT) > WIDTH * 0.25 ? (
+                  <span className="whitespace-nowrap text-[10px] text-muted-foreground/50">No data yet</span>
+                ) : null}
+              </div>
             ) : null}
-          </svg>
+            <svg
+              viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+              preserveAspectRatio="none"
+              className="absolute inset-0 size-full"
+              role="img"
+              aria-label={`${series.map((s) => s.label).join(" and ")} over the last ${rangeLabel}`}
+            >
+              {series.map((s) => {
+                const segments = buildSegments(points, s.key, toX, toY, gapMs);
+                return (
+                  <g key={s.key} className={s.className}>
+                    <path d={areaPath(segments)} fill="currentColor" fillOpacity={0.12} />
+                    <path
+                      d={linePath(segments)}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </g>
+                );
+              })}
+              {hovered ? (
+                <line
+                  x1={toX(hovered.t)}
+                  x2={toX(hovered.t)}
+                  y1={0}
+                  y2={HEIGHT}
+                  className="text-foreground/40"
+                  stroke="currentColor"
+                  strokeWidth={1}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ) : null}
+            </svg>
+          </>
         )}
 
         {hovered ? (
@@ -212,7 +229,13 @@ export function MetricHistoryChart({
       </div>
 
       <div className="flex justify-between text-[10px] text-muted-foreground/60">
-        <span>{partial && firstT !== undefined ? `Since ${formatTime(firstT)}` : `${rangeLabel} ago`}</span>
+        <span>
+          {partial && firstT !== undefined
+            ? fitToData
+              ? `Since ${formatTime(firstT)}`
+              : `${rangeLabel} ago · data since ${formatTime(firstT)}`
+            : `${rangeLabel} ago`}
+        </span>
         <span>Now</span>
       </div>
     </div>
