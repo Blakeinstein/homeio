@@ -31,9 +31,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- **`update.sh` with `HOMEIO_RELEASE_TAG` would have deleted the server's `.env`.** Its tarball path ran `rsync --delete` excluding only `.git`, `node_modules` and `.next`, so `.env`, `.env.local`, the built upload server in `bin/` and `logs/` were removed. They are excluded now.
 - **The in-app update installed `main` even on a server following another branch.** The check compared against `HOMEIO_REPO_BRANCH`, but `update.sh` ran without it and fell back to `main`, so the version offered and the version installed could differ.
 - **The README described telemetry that no longer existed.** The PostHog startup ping was removed in 1.5.10, but the README and `.env.example` kept documenting it while the roadmap said there was none. All three now describe the stats ping above.
+
+### Removed
+
+- **The tarball install path.** `install.sh` and `update.sh` only install with git now. `HOMEIO_RELEASE_TAG` and `HOMEIO_RELEASE_TARBALL_URL` stop the script with a message instead of being ignored; pin a version with `HOMEIO_REPO_BRANCH=v1.10.0`, which fetches that tag with git. The tarball path in `update.sh` ran `rsync --delete` without excluding `.env` or `bin/`, so it would have deleted the server's configuration.
 
 ---
 

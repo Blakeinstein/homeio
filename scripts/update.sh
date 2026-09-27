@@ -18,6 +18,13 @@ PUBLIC_PORT="${HOMEIO_PUBLIC_PORT:-80}"
 NGINX_SITE_NAME="${HOMEIO_NGINX_SITE_NAME:-home-server}"
 REPO_URL="${HOMEIO_REPO_URL:-https://github.com/doctor-io/homeio.git}"
 REPO_BRANCH="${HOMEIO_REPO_BRANCH:-main}"
+
+# The tarball install path is gone; a pinned version is now a git tag.
+if [[ -n "${HOMEIO_RELEASE_TAG:-}" || -n "${HOMEIO_RELEASE_TARBALL_URL:-}" ]]; then
+	echo "[!] HOMEIO_RELEASE_TAG and HOMEIO_RELEASE_TARBALL_URL are no longer supported." >&2
+	echo "[!] Homeio installs with git. To pin a version, set HOMEIO_REPO_BRANCH to its tag, for example HOMEIO_REPO_BRANCH=v1.10.0." >&2
+	exit 1
+fi
 GO_VERSION="${GO_VERSION:-1.23.4}"
 
 # SHA-256 of drizzle/0000_slippery_black_queen.sql — used to seed the migration journal
@@ -25,8 +32,6 @@ GO_VERSION="${GO_VERSION:-1.23.4}"
 BASELINE_MIGRATION_HASH="e10db77d840d8dc1f42a13ee9de57615a2fb7c46d9525e0d1e7a7f42dee72eaf"
 BASELINE_MIGRATION_TS="1776413023965"
 
-HOMEIO_RELEASE_TAG="${HOMEIO_RELEASE_TAG:-}"
-HOMEIO_RELEASE_TARBALL_URL="${HOMEIO_RELEASE_TARBALL_URL:-}"
 HOMEIO_CREATE_BACKUP="${HOMEIO_CREATE_BACKUP:-true}"
 HOMEIO_BACKUP_ROOT="${HOMEIO_BACKUP_ROOT:-/var/backups/home-server/releases}"
 HOMEIO_HEALTHCHECK_URL="${HOMEIO_HEALTHCHECK_URL:-http://127.0.0.1:${APP_PORT}/api/health}"
@@ -197,43 +202,6 @@ deploy_from_git() {
 		rm -rf "${tmp_dir}"
 		print_status "Fresh clone deployed."
 	fi
-}
-
-deploy_from_tarball() {
-	local tmp_dir
-	local extract_dir
-	local source_dir
-	tmp_dir="$(mktemp -d)"
-	extract_dir="${tmp_dir}/extract"
-	mkdir -p "${extract_dir}"
-
-	print_status "Downloading release tarball..."
-	curl -fsSL "${HOMEIO_RELEASE_TARBALL_URL}" -o "${tmp_dir}/release.tar.gz"
-	tar -xzf "${tmp_dir}/release.tar.gz" -C "${extract_dir}"
-
-	if [[ -f "${extract_dir}/package.json" ]]; then
-		source_dir="${extract_dir}"
-	else
-		source_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-	fi
-
-	[[ -n "${source_dir:-}" && -f "${source_dir}/package.json" ]] || { print_error "Could not locate app root in tarball."; exit 1; }
-
-	print_status "Deploying tarball contents..."
-	# --delete must not reach the server's own files: its configuration, the
-	# built upload server and the logs are not in the tarball.
-	rsync -a \
-		--delete \
-		--exclude ".git" \
-		--exclude "node_modules" \
-		--exclude ".next" \
-		--exclude "/.env" \
-		--exclude "/.env.local" \
-		--exclude "/bin/" \
-		--exclude "/logs/" \
-		"${source_dir}/" "${INSTALL_DIR}/"
-
-	rm -rf "${tmp_dir}"
 }
 
 install_dependencies_if_needed() {
@@ -772,9 +740,7 @@ main() {
 	require_root
 	check_prerequisites
 	# Before the rollback trap is armed: a GitHub hiccup only means main is used.
-	if [[ -z "${HOMEIO_RELEASE_TAG}" && -z "${HOMEIO_RELEASE_TARBALL_URL}" ]]; then
-		resolve_repo_ref
-	fi
+	resolve_repo_ref
 	capture_current_state
 	create_backup
 
@@ -785,24 +751,7 @@ main() {
 	stop_upload_server
 	stop_service
 
-	if [[ -n "${HOMEIO_RELEASE_TAG}" ]]; then
-		if [[ "${HOMEIO_RELEASE_TAG}" == "latest" ]]; then
-			print_status "Fetching latest release URL..."
-			HOMEIO_RELEASE_TARBALL_URL="$(curl -fsSL \
-				"https://api.github.com/repos/doctor-io/homeio/releases/latest" \
-				| jq -r '.tarball_url')"
-			[[ -n "${HOMEIO_RELEASE_TARBALL_URL}" ]] || {
-				print_error "Could not fetch latest release URL."; false
-			}
-		else
-			HOMEIO_RELEASE_TARBALL_URL="https://github.com/doctor-io/homeio/archive/refs/tags/${HOMEIO_RELEASE_TAG}.tar.gz"
-		fi
-		deploy_from_tarball
-	elif [[ -n "${HOMEIO_RELEASE_TARBALL_URL}" ]]; then
-		deploy_from_tarball
-	else
-		deploy_from_git
-	fi
+	deploy_from_git
 
 	ensure_security_dependencies
 	install_go
