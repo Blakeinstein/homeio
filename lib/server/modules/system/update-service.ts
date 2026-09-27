@@ -234,6 +234,10 @@ export async function scheduleSystemUpdate(): Promise<SystemUpdateApplyAcceptedR
     "--property=SendSIGKILL=yes",
     "--setenv=HOME=/root",
     "--setenv=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    // update.sh defaults to main. Without these, a server whose check follows
+    // HOMEIO_REPO_BRANCH would announce one version and install another.
+    `--setenv=HOMEIO_REPO_BRANCH=${DEFAULT_REPO_BRANCH}`,
+    `--setenv=HOMEIO_REPO_URL=${DEFAULT_REPO_URL}`,
     "bash",
     "-lc",
     command,

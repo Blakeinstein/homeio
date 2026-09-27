@@ -135,6 +135,8 @@ describe("update-service", () => {
         "--property=KillMode=control-group",
         "--property=TimeoutStopSec=30s",
         "--property=SendSIGKILL=yes",
+        "--setenv=HOMEIO_REPO_BRANCH=main",
+        "--setenv=HOMEIO_REPO_URL=https://github.com/doctor-io/homeio.git",
         "bash",
         "-lc",
         expect.stringContaining("scripts/update.sh"),
