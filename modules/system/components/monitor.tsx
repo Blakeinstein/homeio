@@ -7,7 +7,7 @@ import {
   containerToProcess,
   getStatusBadgeColor,
 } from "@/lib/client/monitor-utils";
-import type { MetricsHistoryRange } from "@/lib/shared/contracts/system";
+import type { MetricsHistoryRange, SystemMetricsSnapshot } from "@/lib/shared/contracts/system";
 import {
   METRICS_HISTORY_RANGE_MS,
   METRICS_HISTORY_SAMPLE_MS,
@@ -124,6 +124,33 @@ function HistoryCard({
           <InfoRow key={r.label} label={r.label} value={r.value} mono />
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Disk usage card ───────────────────────────────────────────────────────────
+
+function DiskUsageCard({ storage }: { storage: SystemMetricsSnapshot["storage"] }) {
+  return (
+    <div className={cn(PANEL_INSET, "flex flex-col gap-2 p-3")}>
+      <div className="flex items-center gap-2">
+        <HardDrive className="size-3.5 text-chart-4" />
+        <span className="text-xs font-semibold text-foreground">Disk Usage</span>
+      </div>
+      {storage ? (
+        <>
+          <div className="h-1.5 overflow-hidden rounded-full bg-background/65">
+            <div className="h-full rounded-full bg-chart-4 transition-all duration-300" style={{ width: `${storage.usedPercent.toFixed(1)}%` }} />
+          </div>
+          <div className="divide-y divide-glass-border/40">
+            <InfoRow label="Used" value={formatBytesCompact(storage.usedBytes)} mono />
+            <InfoRow label="Total" value={formatBytesCompact(storage.totalBytes)} mono />
+            <InfoRow label="Usage" value={`${storage.usedPercent.toFixed(1)}%`} mono />
+          </div>
+        </>
+      ) : (
+        <p className="py-4 text-center text-xs text-muted-foreground/60">Storage data unavailable</p>
+      )}
     </div>
   );
 }
@@ -366,27 +393,6 @@ export function Monitor() {
 
             <div className={cn(PANEL_INSET, "flex flex-col gap-2 p-3")}>
               <div className="flex items-center gap-2">
-                <HardDrive className="size-3.5 text-chart-4" />
-                <span className="text-xs font-semibold text-foreground">Disk Usage</span>
-              </div>
-              {systemMetrics?.storage ? (
-                <>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-background/65">
-                    <div className="h-full rounded-full bg-chart-4 transition-all duration-300" style={{ width: `${systemMetrics.storage.usedPercent.toFixed(1)}%` }} />
-                  </div>
-                  <div className="divide-y divide-glass-border/40">
-                    <InfoRow label="Used" value={formatBytesCompact(systemMetrics.storage.usedBytes)} mono />
-                    <InfoRow label="Total" value={formatBytesCompact(systemMetrics.storage.totalBytes)} mono />
-                    <InfoRow label="Usage" value={`${systemMetrics.storage.usedPercent.toFixed(1)}%`} mono />
-                  </div>
-                </>
-              ) : (
-                <p className="py-4 text-center text-xs text-muted-foreground/60">Storage data unavailable</p>
-              )}
-            </div>
-
-            <div className={cn(PANEL_INSET, "flex flex-col gap-2 p-3")}>
-              <div className="flex items-center gap-2">
                 <Gauge className="size-3.5 text-status-amber" />
                 <span className="text-xs font-semibold text-foreground">Load Average</span>
               </div>
@@ -488,7 +494,16 @@ export function Monitor() {
       )}
 
       {/* ── Disks tab ── */}
-      {tab === "disks" && <DiskManager />}
+      {tab === "disks" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="shrink-0 px-3 pt-3">
+            <DiskUsageCard storage={systemMetrics?.storage} />
+          </div>
+          <div className="min-h-0 flex-1">
+            <DiskManager />
+          </div>
+        </div>
+      )}
 
       {/* ── Network tab ── */}
       {tab === "network" && (
