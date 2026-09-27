@@ -285,10 +285,12 @@ export function Monitor({ onOpenDiskManager }: MonitorProps = {}) {
   // Up with an address, or carrying the default route: the ones worth a card.
   // The rest (unplugged ports, OS plumbing) are listed in one line each.
   // An IPv6 link-local address (fe80::) is on every interface and says nothing.
+  // VPN tunnels such as tailscale0 report their state as unknown, not up, so
+  // anything not known to be down counts when it has an address.
   const activeInterfaces = interfaces.filter(
     (iface) =>
       iface.isDefault ||
-      (iface.up === true &&
+      (iface.up !== false &&
         (iface.ip4 !== null || (iface.ip6 !== null && !iface.ip6.toLowerCase().startsWith("fe80")))),
   );
   const otherInterfaces = interfaces.filter((iface) => !activeInterfaces.includes(iface));

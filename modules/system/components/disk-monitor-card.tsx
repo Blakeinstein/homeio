@@ -64,7 +64,10 @@ export function DiskMonitorCard({ disk, inContainer = false }: { disk: DiskMonit
           <div className="flex items-center gap-1.5">
             <span className="truncate font-mono text-sm font-medium text-foreground">{disk.device}</span>
             <Badge>{MEDIA_LABEL[disk.mediaType]}</Badge>
-            {disk.transport ? <Badge>{disk.transport.toUpperCase()}</Badge> : null}
+            {/* NVMe disks report nvme as their bus too; one badge is enough. */}
+            {disk.transport && disk.transport.toUpperCase() !== MEDIA_LABEL[disk.mediaType].toUpperCase() ? (
+              <Badge>{disk.transport.toUpperCase()}</Badge>
+            ) : null}
           </div>
           <span className="block truncate text-[11px] text-muted-foreground/70">
             {[readableName(disk.vendor), readableName(disk.model)].filter(Boolean).join(" ") || "Unknown model"}
