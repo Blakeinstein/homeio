@@ -241,6 +241,7 @@ install_extras() {
 			ffmpeg \
 			ufw \
 			fail2ban \
+			python3-systemd \
 			samba \
 			wsdd2 \
 			cifs-utils \
@@ -278,6 +279,7 @@ install_extras() {
 			ffmpeg \
 			ufw \
 			fail2ban \
+			python3-systemd \
 			samba \
 			wsdd2 \
 			cifs-utils \
@@ -300,8 +302,23 @@ install_extras() {
 	# Let HomeIO manage these when needed
 	systemctl disable smbd wsdd2 >/dev/null 2>&1 || true
 	systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
+	configure_fail2ban_backend
 	systemctl enable --now fail2ban >/dev/null 2>&1 || true
 	systemctl restart fail2ban >/dev/null 2>&1 || true
+}
+
+# Debian 12+ no longer ships rsyslog, so /var/log/auth.log does not exist and
+# fail2ban's default backend aborts on the sshd jail. Read the journal instead.
+# Kept apart from jail.d/homeio.local, which the app rewrites from Settings.
+configure_fail2ban_backend() {
+	mkdir -p /etc/fail2ban/jail.d
+	cat > /etc/fail2ban/jail.d/00-homeio-backend.local <<'CONF'
+[DEFAULT]
+backend = systemd
+
+[sshd]
+backend = systemd
+CONF
 }
 
 ensure_security_dependencies() {
@@ -310,6 +327,7 @@ ensure_security_dependencies() {
 	local packages=()
 	command_exists ufw || packages+=("ufw")
 	command_exists fail2ban-client || packages+=("fail2ban")
+	dpkg-query -W -f='${Status}' python3-systemd 2>/dev/null | grep -q "install ok installed" || packages+=("python3-systemd")
 
 	if (( ${#packages[@]} > 0 )); then
 		if [[ "${HOMEIO_VERBOSE}" == "true" ]]; then
@@ -321,6 +339,7 @@ ensure_security_dependencies() {
 		fi
 	fi
 
+	configure_fail2ban_backend
 	systemctl enable --now fail2ban >/dev/null 2>&1 || true
 	systemctl restart fail2ban >/dev/null 2>&1 || true
 }
