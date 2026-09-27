@@ -14,8 +14,36 @@ import type {
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_REPO_URL = process.env.HOMEIO_REPO_URL ?? "https://github.com/doctor-io/homeio.git";
-const DEFAULT_REPO_BRANCH = process.env.HOMEIO_REPO_BRANCH ?? "main";
 const UPDATE_LOG_PATH = "/var/log/homeio-self-update.log";
+const RELEASE_TAG = /^v?\d{1,3}\.\d{1,3}\.\d{1,4}(?:-[0-9A-Za-z.-]{1,32})?$/;
+const GITHUB_API_HEADERS = {
+  Accept: "application/vnd.github+json",
+  "User-Agent": "homeio-update-check",
+};
+
+/**
+ * A server that sets HOMEIO_REPO_BRANCH follows that branch, as before.
+ * Everyone else follows published releases, so an update is only offered once
+ * its GitHub release and Docker image exist, not the moment a PR lands on main.
+ */
+function configuredRepoBranch() {
+  return process.env.HOMEIO_REPO_BRANCH?.trim() || null;
+}
+
+function parseGitHubRepository(repositoryUrl: string) {
+  const url = new URL(repositoryUrl.replace(/\.git$/i, ""));
+
+  if (url.hostname !== "github.com") {
+    throw new Error("Unsupported repository host for Homeio update checks");
+  }
+
+  const [owner, repo] = url.pathname.replace(/^\//, "").split("/");
+  if (!owner || !repo) {
+    throw new Error("Invalid Homeio repository URL");
+  }
+
+  return { owner, repo };
+}
 
 function parseVersionParts(version: string) {
   return version
@@ -53,49 +81,29 @@ async function readCurrentVersion() {
 
 export function buildRemotePackageJsonUrl(
   repositoryUrl = DEFAULT_REPO_URL,
-  branch = DEFAULT_REPO_BRANCH,
+  branch = configuredRepoBranch() ?? "main",
 ) {
-  const normalized = repositoryUrl.replace(/\.git$/i, "");
-  const url = new URL(normalized);
-
-  if (url.hostname !== "github.com") {
-    throw new Error("Unsupported repository host for Homeio update checks");
-  }
-
-  const [owner, repo] = url.pathname.replace(/^\//, "").split("/");
-  if (!owner || !repo) {
-    throw new Error("Invalid Homeio repository URL");
-  }
-
+  const { owner, repo } = parseGitHubRepository(repositoryUrl);
   return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/package.json`;
 }
 
 export function buildRemotePackageJsonApiUrl(
   repositoryUrl = DEFAULT_REPO_URL,
-  branch = DEFAULT_REPO_BRANCH,
+  branch = configuredRepoBranch() ?? "main",
 ) {
-  const normalized = repositoryUrl.replace(/\.git$/i, "");
-  const url = new URL(normalized);
-
-  if (url.hostname !== "github.com") {
-    throw new Error("Unsupported repository host for Homeio update checks");
-  }
-
-  const [owner, repo] = url.pathname.replace(/^\//, "").split("/");
-  if (!owner || !repo) {
-    throw new Error("Invalid Homeio repository URL");
-  }
-
+  const { owner, repo } = parseGitHubRepository(repositoryUrl);
   return `https://api.github.com/repos/${owner}/${repo}/contents/package.json?ref=${encodeURIComponent(branch)}`;
 }
 
-async function fetchLatestVersion() {
-  const response = await fetch(buildRemotePackageJsonApiUrl(), {
+export function buildLatestReleaseApiUrl(repositoryUrl = DEFAULT_REPO_URL) {
+  const { owner, repo } = parseGitHubRepository(repositoryUrl);
+  return `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+}
+
+async function fetchBranchVersion(branch: string) {
+  const response = await fetch(buildRemotePackageJsonApiUrl(DEFAULT_REPO_URL, branch), {
     cache: "no-store",
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "homeio-update-check",
-    },
+    headers: GITHUB_API_HEADERS,
   });
 
   if (!response.ok) {
@@ -118,6 +126,36 @@ async function fetchLatestVersion() {
   return packageJson.version.trim();
 }
 
+/** The tag of the release GitHub marks as Latest, or null before the first release. */
+async function fetchLatestReleaseTag() {
+  const response = await fetch(buildLatestReleaseApiUrl(), {
+    cache: "no-store",
+    headers: GITHUB_API_HEADERS,
+  });
+
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Failed to fetch the latest Homeio release (${response.status})`);
+  }
+
+  const parsed = (await response.json()) as { tag_name?: unknown };
+  const tag = typeof parsed.tag_name === "string" ? parsed.tag_name.trim() : "";
+  // The tag becomes a git ref for update.sh, so only accept a version tag.
+  if (!RELEASE_TAG.test(tag)) {
+    throw new Error("The latest Homeio release does not have a version tag");
+  }
+
+  return tag;
+}
+
+async function fetchLatestVersion() {
+  const branch = configuredRepoBranch();
+  if (branch) return fetchBranchVersion(branch);
+
+  const tag = await fetchLatestReleaseTag();
+  return tag ? tag.replace(/^v/i, "") : null;
+}
+
 export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
   return withServerTiming(
     {
@@ -131,7 +169,7 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
       return {
         currentVersion,
         latestVersion,
-        updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
+        updateAvailable: latestVersion !== null && compareVersions(latestVersion, currentVersion) > 0,
         checkedAt: new Date().toISOString(),
         canSelfUpdate: !isContainerRuntime(),
       };
@@ -200,6 +238,13 @@ export async function scheduleSystemUpdate(): Promise<SystemUpdateApplyAcceptedR
     // systemctl failure is non-fatal — proceed with scheduling
   }
 
+  // update.sh fetches this ref: the configured branch, or the exact tag of the
+  // release the update check announced.
+  const targetRef = configuredRepoBranch() ?? (await fetchLatestReleaseTag());
+  if (!targetRef) {
+    throw new Error("There is no published Homeio release to update to yet.");
+  }
+
   const unitName = `homeio-self-update-${Date.now()}`;
   const command = [
     "mkdir -p /var/log",
@@ -215,6 +260,7 @@ export async function scheduleSystemUpdate(): Promise<SystemUpdateApplyAcceptedR
     meta: {
       unitName,
       updateScriptPath,
+      targetRef,
     },
   });
 
@@ -234,9 +280,9 @@ export async function scheduleSystemUpdate(): Promise<SystemUpdateApplyAcceptedR
     "--property=SendSIGKILL=yes",
     "--setenv=HOME=/root",
     "--setenv=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    // update.sh defaults to main. Without these, a server whose check follows
-    // HOMEIO_REPO_BRANCH would announce one version and install another.
-    `--setenv=HOMEIO_REPO_BRANCH=${DEFAULT_REPO_BRANCH}`,
+    // update.sh defaults to main. Without this it would install whatever main
+    // holds rather than the version the update check announced.
+    `--setenv=HOMEIO_REPO_BRANCH=${targetRef}`,
     `--setenv=HOMEIO_REPO_URL=${DEFAULT_REPO_URL}`,
     "bash",
     "-lc",
