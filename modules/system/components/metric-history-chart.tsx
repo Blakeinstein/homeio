@@ -36,6 +36,8 @@ type MetricHistoryChartProps = {
    * part the server has no data for yet, so 1 h and 24 h look different.
    */
   fitToData?: boolean;
+  /** Shown instead of the chart while there is no reading; "Collecting…" by default. */
+  emptyLabel?: string;
 };
 
 type Segment = { x: number; y: number }[];
@@ -101,6 +103,7 @@ export function MetricHistoryChart({
   formatTime,
   rangeLabel,
   fitToData = false,
+  emptyLabel = "Collecting…",
 }: MetricHistoryChartProps) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const firstT = points[0]?.t;
@@ -151,7 +154,7 @@ export function MetricHistoryChart({
       >
         {scale === null ? (
           <span className="absolute inset-0 m-auto flex items-center justify-center text-xs text-muted-foreground/50">
-            Collecting…
+            {emptyLabel}
           </span>
         ) : (
           <>

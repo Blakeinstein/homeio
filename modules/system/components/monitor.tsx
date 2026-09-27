@@ -258,7 +258,7 @@ export function Monitor() {
   const defaultInterface = interfaces.find((iface) => iface.isDefault) ?? null;
   const dnsServers = network.data?.dnsServers ?? [];
   const liveTemperature = livePoint?.temperatureCelsius ?? null;
-  // A VM or a board without a sensor never reports one: leave the card out.
+  // A VM or a board without a sensor never reports one: the chart says so.
   const showTemperature =
     liveTemperature !== null || hasAnyValue(history.points, "temperatureCelsius");
   const cpuSeries: ChartSeries[] = [{ key: "cpuPercent", label: "CPU", className: "text-primary" }];
@@ -323,12 +323,16 @@ export function Monitor() {
       {tab === "processes" && (
         <div className="flex-1 overflow-y-auto p-3">
           {/* Metric summary */}
-          <div className="mb-3 grid grid-cols-5 gap-2">
+          <div className="mb-3 grid grid-cols-4 gap-2">
             <MetricCard
               label="CPU"
               icon={Cpu}
               value={`${systemMetrics?.cpu.normalizedPercent?.toFixed(1) ?? "--"}%`}
-              sub="System average"
+              sub={
+                liveTemperature === null
+                  ? "System average"
+                  : `System average · ${formatCelsius(liveTemperature)}`
+              }
               color="text-primary"
             />
             <MetricCard
@@ -364,19 +368,6 @@ export function Monitor() {
               }
               color="text-sky-400"
             />
-            <MetricCard
-              label="Temperature"
-              icon={Thermometer}
-              value={orDash(liveTemperature, formatCelsius)}
-              sub={
-                liveTemperature === null
-                  ? "No sensor"
-                  : systemMetrics?.temperature.maxCelsius !== null && systemMetrics?.temperature.maxCelsius !== undefined
-                    ? `Max ${formatCelsius(systemMetrics.temperature.maxCelsius)}`
-                    : "Main sensor"
-              }
-              color="text-status-amber"
-            />
           </div>
 
           {/* Resource charts */}
@@ -411,26 +402,10 @@ export function Monitor() {
             >
               <MetricHistoryChart {...chartProps} series={memorySeries} max={100} formatValue={formatPercent} />
             </HistoryCard>
-            {showTemperature ? (
-              <HistoryCard
-                icon={Thermometer}
-                title="Temperature"
-                iconColor="text-status-amber"
-                rows={[
-                  { label: "Current", value: orDash(liveTemperature, formatCelsius) },
-                  { label: "Average", value: orDash(temperatureStats.average, formatCelsius) },
-                  { label: "Max", value: orDash(temperatureStats.peak, formatCelsius) },
-                ]}
-              >
-                <MetricHistoryChart {...chartProps} series={temperatureSeries} fitMin formatValue={formatCelsius} />
-              </HistoryCard>
-            ) : null}
             <HistoryCard
               icon={Network}
               title="Network"
               iconColor="text-status-green"
-              // Without a temperature chart this is the third of three: span the row.
-              className={showTemperature ? undefined : "col-span-2"}
               rows={[
                 { label: "Download", value: orDash(livePoint?.downloadMbps ?? null, formatMbps) },
                 { label: "Upload", value: orDash(livePoint?.uploadMbps ?? null, formatMbps) },
@@ -438,6 +413,24 @@ export function Monitor() {
               ]}
             >
               <MetricHistoryChart {...chartProps} series={networkSeries} formatValue={formatMbps} />
+            </HistoryCard>
+            <HistoryCard
+              icon={Thermometer}
+              title="Temperature"
+              iconColor="text-status-amber"
+              rows={[
+                { label: "Current", value: orDash(liveTemperature, formatCelsius) },
+                { label: "Average", value: orDash(temperatureStats.average, formatCelsius) },
+                { label: "Max", value: orDash(temperatureStats.peak, formatCelsius) },
+              ]}
+            >
+              <MetricHistoryChart
+                {...chartProps}
+                series={temperatureSeries}
+                fitMin
+                formatValue={formatCelsius}
+                emptyLabel={showTemperature ? undefined : "No temperature sensor on this machine"}
+              />
             </HistoryCard>
 
           </div>
