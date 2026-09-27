@@ -63,6 +63,35 @@ command_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
+# The tag of the release GitHub marks as Latest, or nothing when it cannot be
+# read (offline, rate-limited, no release yet). Never fails.
+latest_release_tag() {
+	local repo_path="${REPO_URL#https://github.com/}"
+	repo_path="${repo_path%.git}"
+	local json tag
+	json="$(curl -fsSL --max-time 20 -H "Accept: application/vnd.github+json" \
+		"https://api.github.com/repos/${repo_path}/releases/latest" 2>/dev/null)" || return 0
+	tag="$(printf '%s\n' "${json}" | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"
+	if [[ "${tag}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+		printf '%s\n' "${tag}"
+	fi
+}
+
+# Without HOMEIO_REPO_BRANCH, install the latest published release rather than
+# whatever main holds between a merge and its release. git fetches a tag the
+# same way as a branch.
+resolve_repo_ref() {
+	[[ -n "${HOMEIO_REPO_BRANCH:-}" ]] && return 0
+	local tag
+	tag="$(latest_release_tag)"
+	if [[ -n "${tag}" ]]; then
+		REPO_BRANCH="${tag}"
+		print_status "Latest release: ${tag}"
+	else
+		print_warn "Could not read the latest release from GitHub; using the ${REPO_BRANCH} branch."
+	fi
+}
+
 require_root() {
 	[[ "${EUID}" -eq 0 ]] || { print_error "Run this updater as root (for example: sudo bash update.sh)."; exit 1; }
 }
@@ -191,11 +220,17 @@ deploy_from_tarball() {
 	[[ -n "${source_dir:-}" && -f "${source_dir}/package.json" ]] || { print_error "Could not locate app root in tarball."; exit 1; }
 
 	print_status "Deploying tarball contents..."
+	# --delete must not reach the server's own files: its configuration, the
+	# built upload server and the logs are not in the tarball.
 	rsync -a \
 		--delete \
 		--exclude ".git" \
 		--exclude "node_modules" \
 		--exclude ".next" \
+		--exclude "/.env" \
+		--exclude "/.env.local" \
+		--exclude "/bin/" \
+		--exclude "/logs/" \
 		"${source_dir}/" "${INSTALL_DIR}/"
 
 	rm -rf "${tmp_dir}"
@@ -736,6 +771,10 @@ print_summary() {
 main() {
 	require_root
 	check_prerequisites
+	# Before the rollback trap is armed: a GitHub hiccup only means main is used.
+	if [[ -z "${HOMEIO_RELEASE_TAG}" && -z "${HOMEIO_RELEASE_TARBALL_URL}" ]]; then
+		resolve_repo_ref
+	fi
 	capture_current_state
 	create_backup
 

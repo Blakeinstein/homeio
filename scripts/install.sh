@@ -54,6 +54,35 @@ command_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
+# The tag of the release GitHub marks as Latest, or nothing when it cannot be
+# read (offline, rate-limited, no release yet). Never fails.
+latest_release_tag() {
+	local repo_path="${REPO_URL#https://github.com/}"
+	repo_path="${repo_path%.git}"
+	local json tag
+	json="$(curl -fsSL --max-time 20 -H "Accept: application/vnd.github+json" \
+		"https://api.github.com/repos/${repo_path}/releases/latest" 2>/dev/null)" || return 0
+	tag="$(printf '%s\n' "${json}" | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"
+	if [[ "${tag}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+		printf '%s\n' "${tag}"
+	fi
+}
+
+# Without HOMEIO_REPO_BRANCH, install the latest published release rather than
+# whatever main holds between a merge and its release. git fetches a tag the
+# same way as a branch.
+resolve_repo_ref() {
+	[[ -n "${HOMEIO_REPO_BRANCH:-}" ]] && return 0
+	local tag
+	tag="$(latest_release_tag)"
+	if [[ -n "${tag}" ]]; then
+		REPO_BRANCH="${tag}"
+		print_status "Latest release: ${tag}"
+	else
+		print_warn "Could not read the latest release from GitHub; using the ${REPO_BRANCH} branch."
+	fi
+}
+
 require_root() {
 	[[ "${EUID}" -eq 0 ]] || { print_error "Run this installer as root (for example: sudo bash install.sh)."; exit 1; }
 }
@@ -690,7 +719,8 @@ clone_or_update_repo() {
 		rm -rf "${INSTALL_DIR}"
 	fi
 
-	print_status "Cloning repository (branch: ${REPO_BRANCH})..."
+	resolve_repo_ref
+	print_status "Cloning repository (${REPO_BRANCH})..."
 	git clone --depth=1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${INSTALL_DIR}" --quiet
 }
 
@@ -1244,6 +1274,7 @@ redirect_to_update_if_installed() {
 	print_warn "To force a full reinstall, set HOMEIO_FORCE_REINSTALL=true."
 	echo ""
 
+	resolve_repo_ref
 	local update_url="https://raw.githubusercontent.com/doctor-io/homeio/${REPO_BRANCH}/scripts/update.sh"
 	local tmp_update
 	tmp_update="$(mktemp /tmp/homeio-update-XXXXXX.sh)"
@@ -1256,7 +1287,7 @@ redirect_to_update_if_installed() {
 	fi
 
 	chmod +x "${tmp_update}"
-	# Pass REPO_BRANCH so update.sh stays on the same branch as this installer.
+	# Pass REPO_BRANCH so update.sh installs the same release or branch as this installer.
 	HOMEIO_REPO_BRANCH="${REPO_BRANCH}" exec bash "${tmp_update}"
 }
 
