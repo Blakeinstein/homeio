@@ -67,7 +67,7 @@ describe("MetricHistoryChart", () => {
     const { container } = renderChart(points, { fitToData: true });
 
     const line = container.querySelectorAll("path")[1].getAttribute("d") ?? "";
-    const xs = [...line.matchAll(/[ML](-?[\d.]+),/g)].map((m) => Number(m[1]));
+    const xs = [...line.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[1]));
     expect(Math.min(...xs)).toBeLessThan(15);
     expect(Math.max(...xs)).toBeCloseTo(300, 0);
   });
@@ -77,12 +77,25 @@ describe("MetricHistoryChart", () => {
     const { container } = renderChart(points);
 
     const line = container.querySelectorAll("path")[1].getAttribute("d") ?? "";
-    const xs = [...line.matchAll(/[ML](-?[\d.]+),/g)].map((m) => Number(m[1]));
+    const xs = [...line.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[1]));
     // Two minutes of an hour: the last thirtieth of the width.
     expect(Math.min(...xs)).toBeGreaterThan(285);
     expect(Math.max(...xs)).toBeCloseTo(300, 0);
     expect(screen.getByText("No data yet")).toBeTruthy();
     expect(screen.getByText(/^1 h ago · data since /)).toBeTruthy();
+  });
+
+  it("draws smooth curves that never overshoot a peak or dip below zero", () => {
+    const values = [0, 0, 100, 0, 0, 40, 60, 10];
+    const points = values.map((v, i) => point(NOW - (values.length - i) * 5_000, v));
+    const { container } = renderChart(points, { fitToData: true });
+
+    const line = container.querySelectorAll("path")[1].getAttribute("d") ?? "";
+    expect(line).toContain("C");
+    const ys = [...line.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[2]));
+    // 100 % is y = 0 at the top of the 64-unit chart, 0 % is y = 64 at the bottom.
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(64);
   });
 
   it("shows the nearest reading on hover", () => {

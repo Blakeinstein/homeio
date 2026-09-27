@@ -71,12 +71,66 @@ function buildSegments(
   );
 }
 
+const f = (n: number) => n.toFixed(1);
+
+/**
+ * Tangents for a monotone cubic curve (Fritsch–Carlson): smooth corners that
+ * never overshoot a peak or dip below zero between two samples, so the curve
+ * stays honest about the data.
+ */
+function monotoneTangents(segment: Segment) {
+  const n = segment.length;
+  const slopes: number[] = [];
+  for (let i = 0; i < n - 1; i += 1) {
+    const dx = segment[i + 1].x - segment[i].x;
+    slopes.push(dx === 0 ? 0 : (segment[i + 1].y - segment[i].y) / dx);
+  }
+
+  const tangents = new Array<number>(n);
+  tangents[0] = slopes[0];
+  tangents[n - 1] = slopes[n - 2];
+  for (let i = 1; i < n - 1; i += 1) {
+    tangents[i] = slopes[i - 1] * slopes[i] <= 0 ? 0 : (slopes[i - 1] + slopes[i]) / 2;
+  }
+
+  for (let i = 0; i < n - 1; i += 1) {
+    if (slopes[i] === 0) {
+      tangents[i] = 0;
+      tangents[i + 1] = 0;
+      continue;
+    }
+    const a = tangents[i] / slopes[i];
+    const b = tangents[i + 1] / slopes[i];
+    const length = a * a + b * b;
+    if (length > 9) {
+      const scale = 3 / Math.sqrt(length);
+      tangents[i] = scale * a * slopes[i];
+      tangents[i + 1] = scale * b * slopes[i];
+    }
+  }
+  return tangents;
+}
+
+/** The curve through a segment's points, without its opening move. */
+function curveThrough(segment: Segment) {
+  if (segment.length < 3) {
+    return segment.slice(1).map((p) => `L${f(p.x)},${f(p.y)}`).join("");
+  }
+  const tangents = monotoneTangents(segment);
+  let path = "";
+  for (let i = 0; i < segment.length - 1; i += 1) {
+    const from = segment[i];
+    const to = segment[i + 1];
+    const third = (to.x - from.x) / 3;
+    path +=
+      `C${f(from.x + third)},${f(from.y + tangents[i] * third)} ` +
+      `${f(to.x - third)},${f(to.y - tangents[i + 1] * third)} ${f(to.x)},${f(to.y)}`;
+  }
+  return path;
+}
+
 function linePath(segments: Segment[]) {
-  return segments
-    .map((segment) =>
-      segment.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(""),
-    )
-    .join("");
+  return segments.map((segment) => `M${f(segment[0].x)},${f(segment[0].y)}${curveThrough(segment)}`).join("");
 }
 
 function areaPath(segments: Segment[]) {
@@ -84,9 +138,7 @@ function areaPath(segments: Segment[]) {
     .map((segment) => {
       const first = segment[0];
       const last = segment[segment.length - 1];
-      return `M${first.x.toFixed(1)},${HEIGHT}${segment
-        .map((p) => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`)
-        .join("")}L${last.x.toFixed(1)},${HEIGHT}Z`;
+      return `M${f(first.x)},${HEIGHT}L${f(first.x)},${f(first.y)}${curveThrough(segment)}L${f(last.x)},${HEIGHT}Z`;
     })
     .join("");
 }
