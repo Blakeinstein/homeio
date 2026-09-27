@@ -139,15 +139,17 @@ function HistoryCard({
   iconColor,
   rows,
   children,
+  className,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   iconColor: string;
   rows: { label: string; value: string }[];
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className={cn(PANEL_INSET, "flex flex-col gap-2 p-3")}>
+    <div className={cn(PANEL_INSET, "flex flex-col gap-2 p-3", className)}>
       <div className="flex items-center gap-2">
         <Icon className={cn("size-3.5", iconColor)} />
         <span className="text-xs font-semibold text-foreground">{title}</span>
@@ -352,18 +354,28 @@ export function Monitor() {
               color={daemonAvailable === false ? "text-status-amber" : "text-chart-4"}
             />
             <MetricCard
-              label="Net RX"
-              icon={ArrowDown}
-              value={`${(dockerTotals.totalNetworkRx / 1024 ** 2).toFixed(1)}`}
-              sub="MB received"
-              color="text-status-green"
+              label="Load"
+              icon={Gauge}
+              value={systemMetrics ? systemMetrics.cpu.oneMinute.toFixed(2) : "--"}
+              sub={
+                systemMetrics
+                  ? `5m ${systemMetrics.cpu.fiveMinute.toFixed(2)} · 15m ${systemMetrics.cpu.fifteenMinute.toFixed(2)}`
+                  : "--"
+              }
+              color="text-sky-400"
             />
             <MetricCard
-              label="Net TX"
-              icon={ArrowUp}
-              value={`${(dockerTotals.totalNetworkTx / 1024 ** 2).toFixed(1)}`}
-              sub="MB sent"
-              color="text-sky-400"
+              label="Temperature"
+              icon={Thermometer}
+              value={orDash(liveTemperature, formatCelsius)}
+              sub={
+                liveTemperature === null
+                  ? "No sensor"
+                  : systemMetrics?.temperature.maxCelsius !== null && systemMetrics?.temperature.maxCelsius !== undefined
+                    ? `Max ${formatCelsius(systemMetrics.temperature.maxCelsius)}`
+                    : "Main sensor"
+              }
+              color="text-status-amber"
             />
           </div>
 
@@ -417,6 +429,8 @@ export function Monitor() {
               icon={Network}
               title="Network"
               iconColor="text-status-green"
+              // Without a temperature chart this is the third of three: span the row.
+              className={showTemperature ? undefined : "col-span-2"}
               rows={[
                 { label: "Download", value: orDash(livePoint?.downloadMbps ?? null, formatMbps) },
                 { label: "Upload", value: orDash(livePoint?.uploadMbps ?? null, formatMbps) },
@@ -426,24 +440,6 @@ export function Monitor() {
               <MetricHistoryChart {...chartProps} series={networkSeries} formatValue={formatMbps} />
             </HistoryCard>
 
-            <div className={cn(PANEL_INSET, "flex flex-col gap-2 p-3")}>
-              <div className="flex items-center gap-2">
-                <Gauge className="size-3.5 text-status-amber" />
-                <span className="text-xs font-semibold text-foreground">Load Average</span>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { label: "1m", value: systemMetrics?.cpu.oneMinute?.toFixed(2) },
-                  { label: "5m", value: systemMetrics?.cpu.fiveMinute?.toFixed(2) },
-                  { label: "15m", value: systemMetrics?.cpu.fifteenMinute?.toFixed(2) },
-                ].map(({ label, value }) => (
-                  <div key={label} className={cn(PANEL_INSET, "flex flex-col items-center gap-1 py-3")}>
-                    <span className="font-mono text-sm font-bold text-foreground">{value ?? "--"}</span>
-                    <span className="text-[11px] text-muted-foreground/60">{label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
 
           {/* Container table */}
