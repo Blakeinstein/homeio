@@ -36,7 +36,7 @@ export function seriesStats(points: MetricsHistoryPoint[], key: HistoryMetricKey
 
   for (const point of points) {
     const value = point[key];
-    if (value === null) continue;
+    if (typeof value !== "number") continue;
     sum += value;
     count += 1;
     peak = peak === null ? value : Math.max(peak, value);
@@ -47,5 +47,5 @@ export function seriesStats(points: MetricsHistoryPoint[], key: HistoryMetricKey
 }
 
 export function hasAnyValue(points: MetricsHistoryPoint[], key: HistoryMetricKey) {
-  return points.some((point) => point[key] !== null);
+  return points.some((point) => typeof point[key] === "number");
 }

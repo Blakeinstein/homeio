@@ -22,6 +22,8 @@ function point(t: number, cpu: number | null, temperature: number | null = null)
     temperatureCelsius: temperature,
     downloadMbps: 1,
     uploadMbps: 0.5,
+    diskReadMBps: 2,
+    diskWriteMBps: 1,
   };
 }
 
@@ -102,6 +104,7 @@ describe("metrics history", () => {
       memory: { usedPercent: 40 },
       temperature: { mainCelsius: null },
       wifi: { downloadMbps: Number.NaN, uploadMbps: 2 },
+      diskIo: { readMBps: 12, writeMBps: null },
     } as unknown as SystemMetricsSnapshot;
 
     expect(toHistoryPoint(snapshot, START)).toEqual({
@@ -111,6 +114,8 @@ describe("metrics history", () => {
       temperatureCelsius: null,
       downloadMbps: null,
       uploadMbps: 2,
+      diskReadMBps: 12,
+      diskWriteMBps: null,
     });
   });
 });

@@ -9,7 +9,7 @@ const HOUR = 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 8, 27, 12, 0, 0);
 
 function point(t: number, cpu: number | null): MetricsHistoryPoint {
-  return { t, cpuPercent: cpu, memoryPercent: null, temperatureCelsius: null, downloadMbps: null, uploadMbps: null };
+  return { t, cpuPercent: cpu, memoryPercent: null, temperatureCelsius: null, downloadMbps: null, uploadMbps: null, diskReadMBps: null, diskWriteMBps: null };
 }
 
 function renderChart(points: MetricsHistoryPoint[], { fitToData = false } = {}) {

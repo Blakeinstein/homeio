@@ -25,6 +25,8 @@ const METRIC_KEYS: MetricKey[] = [
   "temperatureCelsius",
   "downloadMbps",
   "uploadMbps",
+  "diskReadMBps",
+  "diskWriteMBps",
 ];
 
 type MinuteBucket = {
@@ -71,7 +73,7 @@ export function createMetricsHistory() {
     bucket ??= emptyBucket(minuteStart);
     for (const key of METRIC_KEYS) {
       const value = point[key];
-      if (value === null) continue;
+      if (typeof value !== "number") continue;
       bucket.sums[key] += value;
       bucket.counts[key] += 1;
     }

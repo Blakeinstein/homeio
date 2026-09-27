@@ -56,11 +56,11 @@ function buildSegments(
   for (const point of points) {
     const value = point[key];
     const gap = previousT !== null && point.t - previousT > gapMs;
-    if (value === null || gap) {
+    if (typeof value !== "number" || gap) {
       if (current.length > 0) segments.push(current);
       current = [];
     }
-    if (value !== null) current.push({ x: toX(point.t), y: toY(value) });
+    if (typeof value === "number") current.push({ x: toX(point.t), y: toY(value) });
     previousT = point.t;
   }
   if (current.length > 0) segments.push(current);
@@ -117,7 +117,7 @@ export function MetricHistoryChart({
 
   const scale = useMemo(() => {
     const values = points.flatMap((point) =>
-      series.map((s) => point[s.key]).filter((v): v is number => v !== null),
+      series.map((s) => point[s.key]).filter((v): v is number => typeof v === "number"),
     );
     if (values.length === 0) return null;
     const dataMax = Math.max(...values);
@@ -218,7 +218,7 @@ export function MetricHistoryChart({
           >
             <div className="font-mono text-muted-foreground">{formatTime(hovered.t)}</div>
             {series.map((s) => {
-              const value = hovered[s.key];
+              const value = hovered[s.key] ?? null;
               return (
                 <div key={s.key} className="flex items-center gap-1.5 whitespace-nowrap font-mono">
                   <span className={cn("size-1.5 rounded-full bg-current", s.className)} />

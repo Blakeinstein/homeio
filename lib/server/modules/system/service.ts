@@ -9,9 +9,18 @@ import { statfs } from "node:fs/promises";
 import path from "node:path";
 import si from "systeminformation";
 import {
+  createDiskRateTracker,
+  readDiskCounters,
+  totalMegabytesPerSecond,
+} from "@/lib/server/modules/system/disk-activity";
+import {
   getNetworkStatusFromHelper,
   isNetworkHelperUnavailableError,
 } from "@/lib/server/modules/network/helper-client";
+
+// Disk throughput is a rate between two readings of /proc/diskstats, one per
+// collected snapshot.
+const snapshotDiskRates = createDiskRateTracker();
 
 const metricsCache = new LruCache<SystemMetricsSnapshot>(
   8,
@@ -562,6 +571,7 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
     networkInterfaces,
     networkStats,
     storageMetrics,
+    diskCounters,
   ] = await Promise.all([
     withFallback("system.metrics.currentLoad", () => si.currentLoad(), null),
     withFallback(
@@ -583,7 +593,11 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
     ),
     withFallback("system.metrics.networkStats", () => si.networkStats(), []),
     collectStorageMetrics(),
+    readDiskCounters(),
   ]);
+  const diskIo = totalMegabytesPerSecond(
+    diskCounters ? snapshotDiskRates(diskCounters, Date.now()) : new Map(),
+  );
 
   const mainTemperature = toNullableMetric(cpuTemperature?.main);
   const normalizedCoreTemps = (cpuTemperature?.cores ?? [])
@@ -671,6 +685,7 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
       maxCelsius: maxTemperature,
       coresCelsius: normalizedCoreTemps,
     },
+    diskIo,
     battery: {
       hasBattery: Boolean(batteryData?.hasBattery),
       isCharging: Boolean(batteryData?.isCharging),

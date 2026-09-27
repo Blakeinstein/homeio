@@ -5,7 +5,7 @@ import type { MetricsHistoryPoint } from "@/lib/shared/contracts/system";
 const T0 = Date.UTC(2026, 8, 27, 12, 0, 0);
 
 function point(t: number, cpu: number | null, temperature: number | null = null): MetricsHistoryPoint {
-  return { t, cpuPercent: cpu, memoryPercent: 40, temperatureCelsius: temperature, downloadMbps: 1, uploadMbps: 1 };
+  return { t, cpuPercent: cpu, memoryPercent: 40, temperatureCelsius: temperature, downloadMbps: 1, uploadMbps: 1, diskReadMBps: null, diskWriteMBps: null };
 }
 
 describe("appendLivePoint", () => {

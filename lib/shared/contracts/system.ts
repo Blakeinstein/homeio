@@ -218,6 +218,9 @@ export type MetricsHistoryPoint = {
   temperatureCelsius: number | null;
   downloadMbps: number | null;
   uploadMbps: number | null;
+  /** Read and written by all disks, in MB/s. */
+  diskReadMBps: number | null;
+  diskWriteMBps: number | null;
 };
 
 export type MetricsHistory = {
@@ -236,6 +239,8 @@ export type SystemMetricsSnapshot = {
   cpu: CpuLoad;
   memory: MemoryUsage;
   temperature: TemperatureMetrics;
+  /** All disks together, in MB/s; null until two readings exist or off Linux. */
+  diskIo?: { readMBps: number | null; writeMBps: number | null };
   battery: BatteryMetrics;
   storage?: StorageMetrics;
   wifi: WifiMetrics;

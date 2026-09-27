@@ -25,5 +25,7 @@ export function toHistoryPoint(snapshot: SystemMetricsSnapshot, t: number): Metr
     temperatureCelsius: finiteOrNull(snapshot.temperature.mainCelsius),
     downloadMbps: finiteOrNull(snapshot.wifi.downloadMbps),
     uploadMbps: finiteOrNull(snapshot.wifi.uploadMbps),
+    diskReadMBps: finiteOrNull(snapshot.diskIo?.readMBps),
+    diskWriteMBps: finiteOrNull(snapshot.diskIo?.writeMBps),
   };
 }

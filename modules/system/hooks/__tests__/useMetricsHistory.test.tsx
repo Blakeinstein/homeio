@@ -9,7 +9,7 @@ import { useMetricsHistory } from "@/modules/system/hooks/useMetricsHistory";
 const NOW = Date.UTC(2026, 8, 27, 12, 0, 0);
 
 function point(t: number, cpu: number): MetricsHistoryPoint {
-  return { t, cpuPercent: cpu, memoryPercent: 1, temperatureCelsius: null, downloadMbps: 0, uploadMbps: 0 };
+  return { t, cpuPercent: cpu, memoryPercent: 1, temperatureCelsius: null, downloadMbps: 0, uploadMbps: 0, diskReadMBps: null, diskWriteMBps: null };
 }
 
 function historyOf(range: MetricsHistory["range"], points: MetricsHistoryPoint[]): MetricsHistory {

@@ -817,7 +817,7 @@ function DesktopShellInner() {
             isMinimized={minimizedWindows.includes("monitor")}
             animationsEnabled={appearance.animationsEnabled}
           >
-            <Monitor />
+            <Monitor onOpenDiskManager={() => openWindow("disk-manager")} />
           </Window>
         )}
 

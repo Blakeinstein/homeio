@@ -7,6 +7,7 @@ export const queryKeys = {
   systemBackups: ["system", "backups"] as const,
   networkStatus: ["network", "status"] as const,
   networkOverview: ["network", "overview"] as const,
+  diskActivity: ["system", "disks", "activity"] as const,
   networkNetworks: ["network", "networks"] as const,
   installedApps: ["apps", "installed"] as const,
   currentUser: ["auth", "current-user"] as const,

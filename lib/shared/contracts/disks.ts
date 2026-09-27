@@ -72,3 +72,34 @@ export type DiskActionResponse = {
   accepted: true;
   action: string;
 };
+
+/** One disk as the Monitor's Disks tab shows it: identity, live throughput and SMART. */
+export type DiskMonitorEntry = {
+  name: string;
+  device: string;
+  model: string | null;
+  vendor: string | null;
+  sizeBytes: number | null;
+  mediaType: DiskMediaType;
+  transport: string | null;
+  isRemovable: boolean;
+  /** Null until a second reading exists, or off Linux. */
+  readBytesPerSec: number | null;
+  writeBytesPerSec: number | null;
+  /** From SMART; null when smartctl has nothing for this disk. */
+  health: "healthy" | "degraded" | "unknown" | null;
+  temperatureCelsius: number | null;
+  powerOnHours: number | null;
+  partitions: Pick<DiskPartition, "name" | "mountpoint" | "fstype" | "sizeBytes">[];
+};
+
+export type DiskMonitorResponse = {
+  disks: DiskMonitorEntry[];
+  /**
+   * In the Docker image lsblk reports the container's own mounts (/etc/hosts…),
+   * so partition mount points are left out rather than shown wrong.
+   */
+  inContainer: boolean;
+  unavailableReason: string | null;
+  sampledAt: string;
+};

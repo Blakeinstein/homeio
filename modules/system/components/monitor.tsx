@@ -28,7 +28,11 @@ import {
 } from "@/modules/system/components/metric-history-chart";
 import { useDockerStats } from "@/modules/system/hooks/useDockerStats";
 import { useSystemMetrics } from "@/modules/system/hooks/useSystemMetrics";
-import { DiskManager } from "@/modules/system/components/disk-manager";
+import {
+  DiskMonitorCard,
+  formatMegabytesPerSecond,
+} from "@/modules/system/components/disk-monitor-card";
+import { useDiskMonitor } from "@/modules/system/hooks/useDiskMonitor";
 import {
   Activity,
   AlertTriangle,
@@ -229,7 +233,12 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
 
 // ── Monitor ───────────────────────────────────────────────────────────────────
 
-export function Monitor() {
+type MonitorProps = {
+  /** Opens the disk manager, where partitioning and wiping live; the Disks tab only watches. */
+  onOpenDiskManager?: () => void;
+};
+
+export function Monitor({ onOpenDiskManager }: MonitorProps = {}) {
   const [tab, setTab] = useState<MonitorTab>("processes");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("cpu");
@@ -268,6 +277,9 @@ export function Monitor() {
   const temperatureStats = seriesStats(history.points, "temperatureCelsius");
   const downloadStats = seriesStats(history.points, "downloadMbps");
   const uploadStats = seriesStats(history.points, "uploadMbps");
+  const diskReadStats = seriesStats(history.points, "diskReadMBps");
+  const diskWriteStats = seriesStats(history.points, "diskWriteMBps");
+  const diskMonitor = useDiskMonitor(tab === "disks");
   const network = useNetworkOverview(tab === "network");
   const interfaces = network.data?.interfaces ?? [];
   // Up with an address, or carrying the default route: the ones worth a card.
@@ -292,6 +304,10 @@ export function Monitor() {
   ];
   const temperatureSeries: ChartSeries[] = [
     { key: "temperatureCelsius", label: "Temperature", className: "text-status-amber" },
+  ];
+  const diskSeries: ChartSeries[] = [
+    { key: "diskReadMBps", label: "Read", className: "text-chart-4" },
+    { key: "diskWriteMBps", label: "Write", className: "text-status-amber" },
   ];
   const networkSeries: ChartSeries[] = [
     { key: "downloadMbps", label: "Down", className: "text-status-green" },
@@ -555,12 +571,61 @@ export function Monitor() {
 
       {/* ── Disks tab ── */}
       {tab === "disks" && (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="shrink-0 px-3 pt-3">
+        <div className="flex-1 overflow-y-auto p-3">
+          <div className="flex flex-col gap-2">
             <DiskUsageCard storage={systemMetrics?.storage} />
-          </div>
-          <div className="min-h-0 flex-1">
-            <DiskManager />
+
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                Activity
+              </span>
+              <RangeSwitch range={range} onChange={setRange} />
+            </div>
+            <HistoryCard
+              icon={HardDrive}
+              title="All disks"
+              iconColor="text-chart-4"
+              rows={[
+                { label: "Read now", value: orDash(livePoint?.diskReadMBps ?? null, formatMegabytesPerSecond) },
+                { label: "Write now", value: orDash(livePoint?.diskWriteMBps ?? null, formatMegabytesPerSecond) },
+                { label: "Peak read", value: orDash(diskReadStats.peak, formatMegabytesPerSecond) },
+                { label: "Peak write", value: orDash(diskWriteStats.peak, formatMegabytesPerSecond) },
+              ]}
+            >
+              <MetricHistoryChart {...chartProps} series={diskSeries} formatValue={formatMegabytesPerSecond} />
+            </HistoryCard>
+
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                Disks{diskMonitor.data?.disks.length ? ` · ${diskMonitor.data.disks.length}` : ""}
+              </span>
+              {onOpenDiskManager ? (
+                <button
+                  type="button"
+                  onClick={onOpenDiskManager}
+                  className="rounded-md px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-background/50 hover:text-foreground"
+                >
+                  Manage disks…
+                </button>
+              ) : null}
+            </div>
+            {diskMonitor.isLoading ? (
+              <p className={cn(PANEL_INSET, "px-4 py-4 text-xs text-muted-foreground/60")}>Detecting disks…</p>
+            ) : diskMonitor.error ? (
+              <p className={cn(PANEL_INSET, "px-4 py-4 text-xs text-status-amber")}>
+                {diskMonitor.error instanceof Error ? diskMonitor.error.message : "Could not load disks"}
+              </p>
+            ) : !diskMonitor.data || diskMonitor.data.disks.length === 0 ? (
+              <p className={cn(PANEL_INSET, "px-4 py-4 text-xs text-muted-foreground/60")}>
+                {diskMonitor.data?.unavailableReason ?? "No disks found"}
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {diskMonitor.data.disks.map((disk) => (
+                  <DiskMonitorCard key={disk.name} disk={disk} inContainer={diskMonitor.data?.inContainer} />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
