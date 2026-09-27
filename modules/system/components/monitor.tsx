@@ -5,8 +5,11 @@ import { hasAnyValue, seriesStats } from "@/lib/client/metrics-history";
 import {
   calculateDockerTotals,
   containerToProcess,
+  findAppForContainer,
   getStatusBadgeColor,
 } from "@/lib/client/monitor-utils";
+import { useInstalledApps } from "@/modules/apps/hooks/useInstalledApps";
+import { useStoreCatalog } from "@/modules/apps/hooks/useStoreCatalog";
 import type { MetricsHistoryRange, SystemMetricsSnapshot } from "@/lib/shared/contracts/system";
 import {
   METRICS_HISTORY_RANGE_MS,
@@ -164,6 +167,28 @@ function HistoryCard({
   );
 }
 
+// ── Container avatar ──────────────────────────────────────────────────────────
+
+/** The app's icon when the container belongs to an installed app, else its initial. */
+function ContainerAvatar({ name, logoUrl }: { name: string; logoUrl: string | null }) {
+  const [failed, setFailed] = useState(false);
+
+  if (logoUrl && !failed) {
+    return (
+      <div className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-glass-border bg-white/90">
+        {/* eslint-disable-next-line @next/next/no-img-element -- store logos are remote and unsized */}
+        <img src={logoUrl} alt="" className="size-full object-contain p-0.5" onError={() => setFailed(true)} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-glass-border bg-background/55 text-xs font-bold text-primary">
+      {name[0]?.toUpperCase() ?? "C"}
+    </div>
+  );
+}
+
 // ── Disk usage card ───────────────────────────────────────────────────────────
 
 function DiskUsageCard({ storage }: { storage: SystemMetricsSnapshot["storage"] }) {
@@ -276,6 +301,19 @@ export function Monitor() {
     value === null ? "--" : format(value);
 
   const dockerProcesses = useMemo(() => dockerStats.map(containerToProcess), [dockerStats]);
+  // Same queries as the desktop's app grid, so the icons come from its cache.
+  const installedApps = useInstalledApps();
+  const installedCatalog = useStoreCatalog({ installedOnly: true });
+  const logoByContainer = useMemo(() => {
+    const apps = installedApps.data ?? [];
+    const catalogLogos = new Map((installedCatalog.data?.apps ?? []).map((app) => [app.id, app.logoUrl]));
+    return new Map(
+      dockerStats.map((container) => {
+        const app = findAppForContainer(container.name, apps);
+        return [container.name, app ? (catalogLogos.get(app.id) ?? app.logoUrl ?? null) : null] as const;
+      }),
+    );
+  }, [dockerStats, installedApps.data, installedCatalog.data]);
 
   const filteredProcesses = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -492,9 +530,7 @@ export function Monitor() {
                     className="grid grid-cols-[2.2fr_0.7fr_0.8fr_0.8fr_0.8fr_0.8fr] gap-2 px-4 py-2.5 text-xs transition-colors hover:bg-background/30"
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
-                      <div className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-glass-border bg-background/55 text-xs font-bold text-primary">
-                        {p.name[0]?.toUpperCase() ?? "C"}
-                      </div>
+                      <ContainerAvatar name={p.name} logoUrl={logoByContainer.get(p.name) ?? null} />
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-foreground">{p.name}</p>
                         <p className="font-mono text-[11px] text-muted-foreground/60">{p.pid}</p>
