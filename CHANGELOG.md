@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **A reminder above the dock when a Homeio update is available.** It shows the new version and the one installed, with **Update now**, **Details** (opens Settings → Updates) and **Later**, which hides it for an hour for that version; a newer version shows straight away. It follows the existing *Update notifications* setting, and is not shown on the lock screen or in demo mode. In the Docker image, where Homeio cannot update itself, it shows `docker compose pull && docker compose up -d` instead of an Update now button; the update status now reports this as `canSelfUpdate`.
+
 ### Security
 
 - **Dependencies with known vulnerabilities are updated.** Next.js 16.3.6 fixes server-side request forgery, a proxy bypass and several denial-of-service bugs; systeminformation fixes a command injection in `networkInterfaces()`, which Homeio calls for system stats; drizzle-orm, js-yaml, ws, sharp and a set of transitive packages are patched too. `npm audit --omit=dev` now reports nothing. The optional `usocket` add-on used by the D-Bus helper pulled in node-gyp 7 and the long-deprecated `request`; it is now built with node-gyp 11. The mobile app moves to Vite 8.

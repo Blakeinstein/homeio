@@ -64,6 +64,24 @@ describe("update-service", () => {
     ).toBe("https://api.github.com/repos/doctor-io/homeio/contents/package.json?ref=main");
   });
 
+  it("reports that the Docker image cannot update itself", async () => {
+    vi.stubEnv("HOMEIO_CONTAINER", "true");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        content: Buffer.from(JSON.stringify({ version: packageJson.version }), "utf8").toString("base64"),
+        encoding: "base64",
+      }),
+    } as Response);
+
+    try {
+      const status = await getSystemUpdateStatus();
+      expect(status.canSelfUpdate).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("reads the current version and reports update availability", async () => {
     const nextVersion = bumpPatchVersion(packageJson.version);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
@@ -80,6 +98,7 @@ describe("update-service", () => {
     expect(status.latestVersion).toBe(nextVersion);
     expect(status.updateAvailable).toBe(true);
     expect(status.checkedAt).toBeTruthy();
+    expect(status.canSelfUpdate).toBe(true);
     const [requestUrl, requestInit] = fetchMock.mock.calls[0] ?? [];
     expect(String(requestUrl)).toBe(
       "https://api.github.com/repos/doctor-io/homeio/contents/package.json?ref=main",

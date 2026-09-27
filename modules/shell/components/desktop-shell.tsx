@@ -43,6 +43,7 @@ import { DiskManager } from "@/modules/system/components/disk-manager";
 import { NotificationsPanel } from "@/modules/system/components/notifications-panel";
 import { StatusBar } from "@/modules/system/components/status-bar";
 import { SystemWidgets } from "@/modules/system/components/system-widgets";
+import { UpdateReminder } from "@/modules/system/components/update-reminder";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -973,6 +974,11 @@ function DesktopShellInner() {
           onItemClick={handleDockClick}
           position={appearance.dockPosition}
           animationsEnabled={appearance.animationsEnabled}
+        />
+
+        <UpdateReminder
+          enabled={!isLocked && !currentUser?.isDemoMode}
+          onOpenDetails={() => openSettingsSection("updates")}
         />
 
         {isLocked && (

@@ -133,6 +133,7 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
         latestVersion,
         updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
         checkedAt: new Date().toISOString(),
+        canSelfUpdate: !isContainerRuntime(),
       };
     },
   );

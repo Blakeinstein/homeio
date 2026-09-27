@@ -155,6 +155,8 @@ export type SystemUpdateStatus = {
   latestVersion: string | null;
   updateAvailable: boolean;
   checkedAt: string | null;
+  /** False in the Docker image, where updating means pulling a new image. */
+  canSelfUpdate: boolean;
 };
 
 export type SystemUpdateApplyAcceptedResponse = {
