@@ -1,3 +1,5 @@
+import type { AppConditionSummary } from "@/lib/shared/app-condition";
+
 export type ContainerStats = {
   id: string;
   name: string;
@@ -50,5 +52,7 @@ export type UnmanagedContainer = {
   state: string;
   /** Docker's human status line, e.g. "Up 3 days". */
   status: string;
+  /** What the container is doing, read from state and status line. */
+  condition: AppConditionSummary;
   composeProject: string | null;
 };

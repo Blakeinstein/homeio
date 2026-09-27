@@ -7,6 +7,7 @@ import type {
   StoreOperationStatus,
 } from "@/lib/shared/contracts/apps";
 import type { UnmanagedContainer } from "@/lib/shared/contracts/docker";
+import type { AppCondition, AppConditionSummary } from "@/lib/shared/app-condition";
 import {
   AlertTriangle,
   BarChart3,
@@ -58,6 +59,8 @@ export type AppItem = {
   webUiUrl: string | null;
   containerName: string | null;
   updateAvailable: boolean;
+  /** Finer state from the server; the desktop falls back to status without it. */
+  condition?: AppConditionSummary | null;
 };
 
 export type AppActionTarget = {
@@ -226,88 +229,117 @@ export function requireAppActionTarget(
   return fallback;
 }
 
-export function getAppVisualState(app: AppItem) {
+type AppVisualState = {
+  imageClass: string;
+  ringClass: string;
+  badgeIcon: ComponentType<{ className?: string }> | null;
+  badgeClass: string;
+  badgeIconClass: string;
+  title: string;
+};
+
+// Running apps keep their colours, anything down turns grey; a bare glyph over
+// the icon marks the states worth a look. No status dot.
+const COLOUR = "";
+const GREY = "opacity-60 grayscale";
+const PLAIN = { imageClass: COLOUR, ringClass: "border-transparent", badgeIcon: null, badgeClass: "", badgeIconClass: "" };
+
+function withCode(label: string, exitCode: number | null | undefined, skipZero = true) {
+  if (exitCode === null || exitCode === undefined || (skipZero && exitCode === 0)) return label;
+  return `${label} (exit ${exitCode})`;
+}
+
+function conditionVisual(condition: AppCondition, exitCode: number | null): AppVisualState {
+  switch (condition) {
+    case "running":
+      return { ...PLAIN, title: "Running" };
+    case "starting":
+      return { ...PLAIN, title: "Starting" };
+    case "unhealthy":
+      return { ...PLAIN, badgeIcon: AlertTriangle, badgeClass: "text-status-red", title: "Running but unhealthy" };
+    case "restarting":
+      return {
+        ...PLAIN,
+        imageClass: GREY,
+        badgeIcon: RefreshCw,
+        badgeClass: "text-white",
+        badgeIconClass: "animate-spin",
+        title: withCode("Restarting", exitCode),
+      };
+    case "partial":
+      return {
+        ...PLAIN,
+        badgeIcon: AlertTriangle,
+        badgeClass: "text-status-amber",
+        title: exitCode === null ? "Degraded: a service is not running" : `Degraded: a service exited (code ${exitCode})`,
+      };
+    case "paused":
+      return { ...PLAIN, imageClass: GREY, badgeIcon: Pause, badgeClass: "text-white", title: "Paused" };
+    case "crashed":
+      return {
+        ...PLAIN,
+        imageClass: GREY,
+        badgeIcon: AlertTriangle,
+        badgeClass: "text-status-red",
+        title: withCode("Crashed", exitCode, false),
+      };
+    case "stopped":
+      return { ...PLAIN, imageClass: GREY, title: withCode("Stopped", exitCode) };
+    case "created":
+      return { ...PLAIN, imageClass: GREY, ringClass: "border-dashed border-muted-foreground/30", title: "Never started" };
+    case "unknown":
+    default:
+      return { ...PLAIN, imageClass: GREY, title: "Status unknown" };
+  }
+}
+
+// The coarse status the grid already knows, from the server or from an
+// optimistic click (Stop shows as stopped before the server confirms).
+function coarseOf(condition: AppCondition): AppGridStatus {
+  if (condition === "running" || condition === "starting" || condition === "unhealthy") return "running";
+  if (condition === "partial") return "partial";
+  if (condition === "paused") return "paused";
+  if (condition === "unknown") return "unknown";
+  return "stopped";
+}
+
+function statusOnlyCondition(status: AppGridStatus): AppCondition {
+  if (status === "running" || status === "partial" || status === "paused" || status === "stopped") return status;
+  return "unknown";
+}
+
+export function getAppVisualState(app: AppItem): AppVisualState {
   if (app.status === "updating") {
     return {
-      containerClass: "animate-pulse shadow-amber-500/20",
-      imageClass: "",
-      dotClass: "bg-status-amber",
-      dotInnerClass: "animate-pulse bg-status-amber",
-      ringClass: "border-status-amber/60",
+      ...PLAIN,
+      imageClass: GREY,
       badgeIcon: RefreshCw,
-      badgeClass: "bg-status-amber/20 text-status-amber",
+      badgeClass: "text-white",
       badgeIconClass: "animate-spin",
       title: "Processing",
     };
   }
 
-  if (app.status === "partial") {
-    return {
-      containerClass: "animate-pulse shadow-amber-500/10",
-      imageClass: "opacity-80 saturate-50",
-      dotClass: "bg-status-amber",
-      dotInnerClass: "animate-pulse bg-status-amber",
-      ringClass: "border-status-amber/40",
-      badgeIcon: AlertTriangle,
-      badgeClass: "bg-status-amber/15 text-status-amber",
-      badgeIconClass: "",
-      title: "Degraded",
-    };
-  }
-
-  if (app.status === "paused") {
-    return {
-      containerClass: "animate-pulse shadow-amber-500/10",
-      imageClass: "opacity-80 saturate-50",
-      dotClass: "bg-status-amber",
-      dotInnerClass: "animate-pulse bg-status-amber",
-      ringClass: "border-status-amber/40",
-      badgeIcon: Pause,
-      badgeClass: "bg-status-amber/15 text-status-amber",
-      badgeIconClass: "",
-      title: "Paused",
-    };
-  }
-
   if (app.status === "unmanaged") {
+    const condition = app.condition ?? { condition: "unknown" as const, exitCode: null };
+    const visual = conditionVisual(condition.condition, condition.exitCode);
+    // Same colours as Homeio's apps; the dashed outline says someone else runs it.
     return {
-      containerClass: "",
-      imageClass: "opacity-70 grayscale",
-      dotClass: "bg-muted-foreground/50",
-      dotInnerClass: "",
-      ringClass: "border-muted-foreground/25",
-      badgeIcon: null,
-      badgeClass: "",
-      badgeIconClass: "",
-      title: "Not managed by Homeio",
+      ...visual,
+      ringClass: visual.ringClass.includes("border-transparent")
+        ? "border-dashed border-muted-foreground/40"
+        : `${visual.ringClass} border-dashed`,
+      title: `${visual.title} · not managed by Homeio`,
     };
   }
 
-  if (app.status === "stopped" || app.status === "unknown") {
-    return {
-      containerClass: "animate-pulse shadow-status-red/10",
-      imageClass: "opacity-65 grayscale",
-      dotClass: "bg-status-red",
-      dotInnerClass: "animate-ping bg-status-red/80",
-      ringClass: "border-status-red/35",
-      badgeIcon: AlertTriangle,
-      badgeClass: "bg-status-red/15 text-status-red",
-      badgeIconClass: "",
-      title: app.status === "unknown" ? "Status unknown" : "Down",
-    };
-  }
-
-  return {
-    containerClass: "",
-    imageClass: "",
-    dotClass: "bg-status-green",
-    dotInnerClass: "",
-    ringClass: "border-transparent",
-    badgeIcon: null,
-    badgeClass: "",
-    badgeIconClass: "",
-    title: "Running",
-  };
+  // Trust the server's finer condition only while it agrees with the status
+  // shown, so an optimistic Stop is not overridden by a stale "running".
+  const condition =
+    app.condition && coarseOf(app.condition.condition) === app.status
+      ? app.condition
+      : { condition: statusOnlyCondition(app.status), exitCode: null };
+  return conditionVisual(condition.condition, condition.exitCode);
 }
 
 export function buildUnmanagedAppItems(
@@ -324,6 +356,7 @@ export function buildUnmanagedAppItems(
       color: visual.color,
       bgColor: visual.bgColor,
       status: "unmanaged" as const,
+      condition: container.condition,
       category: "Containers",
       webUiPort: null,
       webUiUrl: null,
@@ -392,6 +425,7 @@ export function buildAppItems(params: {
         color: visual.color,
         bgColor: visual.bgColor,
         status: derivedStatus,
+        condition: installed?.condition ?? null,
         category: catalog?.categories[0] ?? visual.category,
         webUiPort: installed?.webUiPort ?? null,
         webUiUrl: installed?.webUiUrl ?? null,

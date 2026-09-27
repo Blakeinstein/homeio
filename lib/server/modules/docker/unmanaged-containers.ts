@@ -3,6 +3,11 @@ import "server-only";
 import { listContainers } from "@/lib/server/modules/docker/stats";
 import { listInstalledStacksFromDb } from "@/lib/server/modules/apps/stacks-repository";
 import { logServerAction } from "@/lib/server/logging/logger";
+import {
+  parseDockerStatusLine,
+  summarizeContainers,
+  type AppConditionSummary,
+} from "@/lib/shared/app-condition";
 
 const COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
@@ -14,6 +19,8 @@ export type UnmanagedContainer = {
   state: string;
   /** Docker's human status line, e.g. "Up 3 days". */
   status: string;
+  /** What the container is doing, read from state and status line. */
+  condition: AppConditionSummary;
   composeProject: string | null;
 };
 
@@ -61,6 +68,9 @@ export async function listUnmanagedContainers(): Promise<UnmanagedContainer[]> {
       image: container.Image ?? "",
       state: container.State ?? "unknown",
       status: container.Status ?? "",
+      condition: summarizeContainers([
+        { state: container.State ?? "unknown", ...parseDockerStatusLine(container.Status ?? "") },
+      ]),
       composeProject: container.Labels?.[COMPOSE_PROJECT_LABEL] ?? null,
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
