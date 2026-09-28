@@ -3,6 +3,7 @@ import next from "next";
 import { parse } from "node:url";
 import compression from "compression";
 import { closeServerGracefully } from "./lib/server/http/graceful-shutdown";
+import { configureUpstreamKeepAlive } from "./lib/server/http/keep-alive";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname =
@@ -79,6 +80,7 @@ async function main() {
       res.end("internal server error");
     }
   });
+  configureUpstreamKeepAlive(server);
 
   // Initialize WebSocket server for terminal (optional feature).
   // This gracefully fails if node-pty is not available.

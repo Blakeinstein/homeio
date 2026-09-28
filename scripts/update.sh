@@ -405,6 +405,45 @@ restart_dbus_helper_service() {
 	systemctl restart "${DBUS_SERVICE_UNIT}"
 }
 
+# Debian ships nginx with 768 connections per worker. Each open Homeio desktop
+# holds three live streams, and each stream uses two connections (visitor side
+# and Homeio side), so the default caps a server at a few hundred desktops.
+# Only these two limits are raised; the rest of nginx.conf is left alone.
+tune_nginx_limits() {
+	local main_conf="/etc/nginx/nginx.conf"
+	local worker_connections=4096
+	local worker_rlimit_nofile=16384
+	[[ -f "${main_conf}" ]] || return 0
+
+	local current raise_connections=false add_rlimit=false
+	current="$(sed -nE 's/^\s*worker_connections\s+([0-9]+);.*/\1/p' "${main_conf}" | head -n1)"
+	if [[ -n "${current}" ]] && (( current < worker_connections )); then
+		raise_connections=true
+	fi
+	if ! grep -qE '^\s*worker_rlimit_nofile\s' "${main_conf}"; then
+		add_rlimit=true
+	fi
+	if [[ "${raise_connections}" == false && "${add_rlimit}" == false ]]; then
+		return 0
+	fi
+
+	cp "${main_conf}" "${main_conf}.homeio-bak"
+	if [[ "${raise_connections}" == true ]]; then
+		sed -i -E "s/^(\s*worker_connections\s+)[0-9]+;/\1${worker_connections};/" "${main_conf}"
+	fi
+	if [[ "${add_rlimit}" == true ]]; then
+		sed -i -E "/^\s*worker_processes\s/a worker_rlimit_nofile ${worker_rlimit_nofile};" "${main_conf}"
+	fi
+
+	if ! nginx -t >/dev/null 2>&1; then
+		print_warn "nginx rejected the raised connection limits; keeping its previous settings."
+		mv "${main_conf}.homeio-bak" "${main_conf}"
+		return 0
+	fi
+	rm -f "${main_conf}.homeio-bak"
+	print_status "nginx now accepts ${worker_connections} connections per worker."
+}
+
 configure_reverse_proxy() {
 	if ! command_exists nginx; then
 		print_warn "nginx is not installed; skipping reverse proxy update."
@@ -567,6 +606,9 @@ EOF
 upstream homeio_backend {
     server 127.0.0.1:${APP_PORT};
     keepalive 32;
+    # Homeio keeps idle connections open longer than this, so nginx is always
+    # the side that closes them (see lib/server/http/keep-alive.ts).
+    keepalive_timeout 60s;
 }
 
 server {
@@ -626,6 +668,7 @@ EOF
 	ln -sf "${nginx_conf}" "${nginx_enabled}"
 	rm -f /etc/nginx/sites-enabled/default >/dev/null 2>&1 || true
 
+	tune_nginx_limits
 	nginx -t
 	systemctl enable --now nginx
 	systemctl reload nginx
