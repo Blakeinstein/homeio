@@ -2,9 +2,11 @@ import "server-only";
 
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
+import { memoizeAsync } from "@/lib/server/cache/memoize-async";
 import { SYSTEM_TIMEZONE_OPTIONS, type SystemPreferences } from "@/lib/shared/contracts/system";
 
 const ALLOWED_TIMEZONE_SET = new Set<string>(SYSTEM_TIMEZONE_OPTIONS);
+const PREFERENCES_CACHE_TTL_MS = 30_000;
 
 function normalizeHostname(input: string) {
   let hostname = input.trim().toLowerCase().replace(/\s+/g, "");
@@ -145,14 +147,37 @@ async function restartAvahiDaemon() {
   }
 }
 
-export async function getSystemPreferences(): Promise<SystemPreferences> {
+async function readSystemPreferences(): Promise<SystemPreferences> {
   const [hostname, timezone] = await Promise.all([readHostname(), readTimezone()]);
   return { hostname, timezone };
 }
 
+// Settings reads these on every open, and each read spawns hostnamectl and
+// timedatectl. They change through updateSystemPreferences, which drops the
+// cache, or at the shell, which the TTL catches up with.
+const cachedPreferences = memoizeAsync(readSystemPreferences, PREFERENCES_CACHE_TTL_MS);
+
+export async function getSystemPreferences(): Promise<SystemPreferences> {
+  return { ...(await cachedPreferences()) };
+}
+
+export function resetPreferencesCacheForTests() {
+  cachedPreferences.invalidate();
+}
+
 export async function updateSystemPreferences(input: SystemPreferences) {
+  try {
+    await applySystemPreferences(input);
+  } finally {
+    cachedPreferences.invalidate();
+  }
+  return getSystemPreferences();
+}
+
+async function applySystemPreferences(input: SystemPreferences) {
   const hostname = normalizeHostname(input.hostname);
-  const current = await getSystemPreferences();
+  // Compare with the system as it is now, not as it was cached.
+  const current = await readSystemPreferences();
   const timezone = input.timezone.trim();
 
   if (!ALLOWED_TIMEZONE_SET.has(timezone) && timezone !== current.timezone) {
@@ -188,6 +213,4 @@ export async function updateSystemPreferences(input: SystemPreferences) {
       }
     }
   }
-
-  return getSystemPreferences();
 }

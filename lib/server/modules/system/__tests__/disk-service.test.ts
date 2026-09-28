@@ -16,7 +16,13 @@ vi.mock("node:fs/promises", () => ({
   stat: vi.fn(),
 }));
 
-import { getDiskInventory, wipeDisk, mountPartition, unmountPartition } from "@/lib/server/modules/system/disk-service";
+import {
+  getDiskInventory,
+  invalidateDiskList,
+  mountPartition,
+  unmountPartition,
+  wipeDisk,
+} from "@/lib/server/modules/system/disk-service";
 
 describe("disk-service safety validations", () => {
   beforeEach(() => {
@@ -107,6 +113,7 @@ describe("getDiskInventory", () => {
 
   beforeEach(() => {
     execFileMock.mockReset();
+    invalidateDiskList();
     setPlatform("linux");
     vi.stubEnv("HOMEIO_CONTAINER", "");
   });
@@ -137,6 +144,19 @@ describe("getDiskInventory", () => {
     expect(inventory.disks.map((d) => d.name)).toEqual(["sda"]);
     expect(inventory.unavailableReason).toBeNull();
     expect(inventory.readOnly).toBe(false);
+  });
+
+  it("reuses the disk list between polls, and reads it again after a disk command", async () => {
+    lsblkReturns([{ name: "sda", type: "disk", size: 500_000_000_000, children: [] }]);
+
+    await getDiskInventory();
+    await getDiskInventory();
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+
+    await unmountPartition("/dev/sda1").catch(() => {});
+    await getDiskInventory();
+    const lsblkCalls = execFileMock.mock.calls.filter(([command]) => command === "lsblk");
+    expect(lsblkCalls).toHaveLength(2);
   });
 
   it("says lsblk is missing instead of reporting no disks", async () => {

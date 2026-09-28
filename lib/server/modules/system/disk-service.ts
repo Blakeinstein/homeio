@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile, access } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { memoizeAsync } from "@/lib/server/cache/memoize-async";
 import type {
   DiskDevice,
   DiskFilesystem,
@@ -14,6 +15,9 @@ import type {
 import { isContainerRuntime } from "@/lib/server/modules/system/update-service";
 
 const execFileAsync = promisify(execFile);
+// The Disks tab polls every few seconds per open window. Plugging a disk in
+// shows up within DISK_LIST_TTL_MS; Homeio's own disk commands drop the cache.
+const DISK_LIST_TTL_MS = 5_000;
 
 // ─── lsblk types ─────────────────────────────────────────────────────────────
 
@@ -76,6 +80,22 @@ async function readLsblk(): Promise<LsblkOutput> {
   return JSON.parse(result.stdout) as LsblkOutput;
 }
 
+const cachedLsblk = memoizeAsync(readLsblk, DISK_LIST_TTL_MS);
+
+/** Drops the cached disk list, so the next read shows a disk that was just changed or plugged in. */
+export function invalidateDiskList() {
+  cachedLsblk.invalidate();
+}
+
+/** Runs a command that changes disks, then drops the cached disk list. */
+async function runDiskCommand(command: string, args: string[]) {
+  try {
+    return await execFileAsync(command, args);
+  } finally {
+    invalidateDiskList();
+  }
+}
+
 function describeDiskListFailure(error: unknown) {
   if (process.platform !== "linux") {
     return `Disk management needs Linux; this machine runs ${process.platform}.`;
@@ -92,7 +112,7 @@ function describeDiskListFailure(error: unknown) {
 export async function getDiskInventory(): Promise<DiskListResponse> {
   const readOnly = isContainerRuntime();
   try {
-    return { disks: parseDisks(await readLsblk()), unavailableReason: null, readOnly };
+    return { disks: parseDisks(await cachedLsblk()), unavailableReason: null, readOnly };
   } catch (error) {
     return { disks: [], unavailableReason: describeDiskListFailure(error), readOnly };
   }
@@ -100,6 +120,7 @@ export async function getDiskInventory(): Promise<DiskListResponse> {
 
 export async function listDisks(): Promise<DiskDevice[]> {
   try {
+    // Always fresh: wipeDisk relies on it to refuse a disk that is mounted right now.
     return parseDisks(await readLsblk());
   } catch {
     return [];
@@ -251,7 +272,7 @@ export async function formatPartition(
 
   args.push(device);
 
-  await execFileAsync(cmd, args);
+  await runDiskCommand(cmd, args);
 }
 
 // ─── mount ────────────────────────────────────────────────────────────────────
@@ -276,7 +297,7 @@ export async function mountPartition(
 
   const target = resolveMountTarget(mountPoint);
   await mkdir(target, { recursive: true });
-  await execFileAsync("mount", [device, target]);
+  await runDiskCommand("mount", [device, target]);
 
   if (addToFstab) {
     await appendFstabEntry(device, target);
@@ -323,7 +344,7 @@ export async function unmountPartition(device: string): Promise<void> {
   if (!VALID_PARTITION_RE.test(device) && !VALID_MOUNTPOINT_RE.test(device)) {
     throw new Error("Invalid device or mount path");
   }
-  await execFileAsync("umount", [device]);
+  await runDiskCommand("umount", [device]);
 }
 
 // ─── create partition ─────────────────────────────────────────────────────────
@@ -341,12 +362,12 @@ export async function createPartition(
 
   // Ensure GPT table exists (safe — no-op if already present)
   try {
-    await execFileAsync("parted", ["--script", disk, "mklabel", "gpt"]);
+    await runDiskCommand("parted", ["--script", disk, "mklabel", "gpt"]);
   } catch {
     // Disk may already have a partition table
   }
 
-  await execFileAsync("parted", [
+  await runDiskCommand("parted", [
     "--script",
     "--align",
     "optimal",
@@ -370,7 +391,7 @@ export async function deletePartition(device: string): Promise<void> {
   if (!info) throw new Error(`Cannot determine partition number from ${device}`);
 
   const disk = `/dev/${info.disk}`;
-  await execFileAsync("parted", ["--script", disk, "rm", String(info.number)]);
+  await runDiskCommand("parted", ["--script", disk, "rm", String(info.number)]);
 }
 
 // ─── wipe disk ────────────────────────────────────────────────────────────────
@@ -404,5 +425,5 @@ export async function wipeDisk(disk: string): Promise<void> {
   }
 
   // wipefs removes all filesystem and partition table signatures
-  await execFileAsync("wipefs", ["--all", "--force", disk]);
+  await runDiskCommand("wipefs", ["--all", "--force", disk]);
 }

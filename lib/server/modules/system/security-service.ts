@@ -3,6 +3,7 @@ import "server-only";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { memoizeAsync } from "@/lib/server/cache/memoize-async";
 import {
   SYSTEM_SECURITY_BAN_DURATION_MAX,
   SYSTEM_SECURITY_BAN_DURATION_MIN,
@@ -18,6 +19,7 @@ const DEFAULT_FIREWALL_INCOMING_POLICY: SystemSecurityPolicy = "deny";
 const DEFAULT_FIREWALL_OUTGOING_POLICY: SystemSecurityPolicy = "allow";
 const DEFAULT_FAIL2BAN_MAX_RETRIES = 5;
 const DEFAULT_FAIL2BAN_BAN_DURATION_SECONDS = 3_600;
+const SECURITY_CACHE_TTL_MS = 30_000;
 
 function resolveFail2BanOverridePath() {
   return process.env.HOMEIO_FAIL2BAN_OVERRIDE_PATH ?? "/etc/fail2ban/jail.d/homeio.local";
@@ -276,7 +278,7 @@ function normalizeSecuritySettings(input: SystemSecuritySettings): SystemSecurit
   };
 }
 
-export async function getSystemSecuritySettings(): Promise<SystemSecuritySettings> {
+async function readSystemSecuritySettings(): Promise<SystemSecuritySettings> {
   const [firewall, fail2ban] = await Promise.all([readUfwStatus(), readFail2BanSettings()]);
 
   return {
@@ -287,6 +289,19 @@ export async function getSystemSecuritySettings(): Promise<SystemSecuritySetting
     fail2banMaxRetries: fail2ban.maxRetries,
     fail2banBanDurationSeconds: fail2ban.banDuration,
   };
+}
+
+// Settings reads these on every open, and each read spawns ufw, iptables and
+// systemctl. They change through updateSystemSecuritySettings, which drops the
+// cache, or at the shell, which the TTL catches up with.
+const cachedSecuritySettings = memoizeAsync(readSystemSecuritySettings, SECURITY_CACHE_TTL_MS);
+
+export async function getSystemSecuritySettings(): Promise<SystemSecuritySettings> {
+  return { ...(await cachedSecuritySettings()) };
+}
+
+export function resetSecuritySettingsCacheForTests() {
+  cachedSecuritySettings.invalidate();
 }
 
 export async function updateSystemSecuritySettings(input: SystemSecuritySettings) {
@@ -305,6 +320,8 @@ export async function updateSystemSecuritySettings(input: SystemSecuritySettings
     });
   } catch (error) {
     throw new Error(toErrorMessage(error));
+  } finally {
+    cachedSecuritySettings.invalidate();
   }
 
   return getSystemSecuritySettings();

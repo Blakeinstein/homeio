@@ -11,7 +11,11 @@ vi.mock("node:child_process", () => ({
   execFile: execFileMock,
 }));
 
-import { updateSystemPreferences } from "@/lib/server/modules/system/preferences-service";
+import {
+  getSystemPreferences,
+  resetPreferencesCacheForTests,
+  updateSystemPreferences,
+} from "@/lib/server/modules/system/preferences-service";
 
 function resolveExecFileCallback(args: unknown[]) {
   const maybeCallback = args.at(-1);
@@ -25,6 +29,7 @@ function resolveExecFileCallback(args: unknown[]) {
 describe("preferences-service", () => {
   beforeEach(async () => {
     execFileMock.mockReset();
+    resetPreferencesCacheForTests();
     const root = await mkdtemp(path.join(os.tmpdir(), "homeio-preferences-"));
     const timezonePath = path.join(root, "timezone");
     const hostsPath = path.join(root, "hosts");
@@ -35,6 +40,26 @@ describe("preferences-service", () => {
 
     process.env.HOMEIO_TIMEZONE_FILE_PATH = timezonePath;
     process.env.HOMEIO_HOSTS_FILE_PATH = hostsPath;
+  });
+
+  it("reads the host once for repeated Settings loads, and shows a saved change at once", async () => {
+    let currentHostname = "homeio";
+    execFileMock.mockImplementation((command: string, args: string[], ...rest: unknown[]) => {
+      const callback = resolveExecFileCallback(rest);
+      if (command === "hostnamectl" && args[0] === "set-hostname") currentHostname = args[1] ?? currentHostname;
+      if (command === "hostnamectl" && args[0] === "--static") return callback(null, `${currentHostname}\n`, "");
+      if (command === "timedatectl" && args[0] === "show") return callback(null, "Etc/UTC\n", "");
+      callback(null, "", "");
+    });
+    const hostnameReads = () =>
+      execFileMock.mock.calls.filter(([command, args]) => command === "hostnamectl" && args[0] === "--static").length;
+
+    await getSystemPreferences();
+    await getSystemPreferences();
+    expect(hostnameReads()).toBe(1);
+
+    await updateSystemPreferences({ hostname: "nas", timezone: "Etc/UTC" });
+    expect(await getSystemPreferences()).toEqual({ hostname: "nas", timezone: "Etc/UTC" });
   });
 
   it("restarts avahi after hostname changes and rewrites the hosts file", async () => {

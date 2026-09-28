@@ -31,6 +31,31 @@ describe("memoizeAsync", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
+  it("reads again after invalidate", async () => {
+    const load = vi.fn(async () => load.mock.calls.length);
+    const read = memoizeAsync(load, 10_000);
+
+    expect(await read()).toBe(1);
+    read.invalidate();
+    expect(await read()).toBe(2);
+  });
+
+  it("does not keep a result read before invalidate", async () => {
+    let finish: (value: string) => void = () => {};
+    const load = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+      .mockResolvedValueOnce("after change");
+    const read = memoizeAsync(load, 10_000);
+
+    const before = read();
+    read.invalidate();
+    finish("before change");
+
+    expect(await before).toBe("before change");
+    expect(await read()).toBe("after change");
+  });
+
   it("does not cache a failure", async () => {
     const load = vi
       .fn<() => Promise<string>>()

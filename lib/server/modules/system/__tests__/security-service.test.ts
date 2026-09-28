@@ -14,6 +14,7 @@ vi.mock("node:child_process", () => ({
 import {
   buildFail2BanOverrideContent,
   getSystemSecuritySettings,
+  resetSecuritySettingsCacheForTests,
   updateSystemSecuritySettings,
 } from "@/lib/server/modules/system/security-service";
 
@@ -29,8 +30,32 @@ function resolveExecFileCallback(args: unknown[]) {
 describe("security-service", () => {
   beforeEach(async () => {
     execFileMock.mockReset();
+    resetSecuritySettingsCacheForTests();
     const root = await mkdtemp(path.join(os.tmpdir(), "homeio-security-"));
     process.env.HOMEIO_FAIL2BAN_OVERRIDE_PATH = path.join(root, "jail.d", "homeio.local");
+  });
+
+  it("reads the host once for repeated Settings loads, and again after a change", async () => {
+    execFileMock.mockImplementation((_command: string, _args: string[], ...rest: unknown[]) => {
+      resolveExecFileCallback(rest)(null, "", "");
+    });
+    const ufwStatusReads = () =>
+      execFileMock.mock.calls.filter(([command, args]) => command === "ufw" && args[0] === "status").length;
+
+    await getSystemSecuritySettings();
+    await getSystemSecuritySettings();
+    expect(ufwStatusReads()).toBe(1);
+
+    await updateSystemSecuritySettings({
+      firewallEnabled: true,
+      firewallIncomingPolicy: "deny",
+      firewallOutgoingPolicy: "allow",
+      fail2banEnabled: false,
+      fail2banMaxRetries: 5,
+      fail2banBanDurationSeconds: 3_600,
+    }).catch(() => {});
+    await getSystemSecuritySettings();
+    expect(ufwStatusReads()).toBe(2);
   });
 
   it("reads UFW and Fail2Ban state from the host", async () => {
