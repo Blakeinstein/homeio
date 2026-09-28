@@ -153,6 +153,26 @@ x-casaos:
     expect(vi.mocked(stat).mock.calls.length).toBe(statCallsAfterFirst);
   });
 
+  it("shares one revalidation between requests arriving together", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const { getStoreCatalogSnapshot } = await import("@/lib/server/modules/store/catalog");
+      const { stat } = await import("node:fs/promises");
+
+      await getStoreCatalogSnapshot();
+      const statsPerRevalidation = vi.mocked(stat).mock.calls.length;
+      vi.advanceTimersByTime(31_000);
+
+      const before = vi.mocked(stat).mock.calls.length;
+      await Promise.all(Array.from({ length: 5 }, () => getStoreCatalogSnapshot()));
+
+      expect(vi.mocked(stat).mock.calls.length - before).toBeLessThanOrEqual(statsPerRevalidation);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("still picks up on-disk changes once the revalidation window elapses", async () => {
     vi.useFakeTimers();
 

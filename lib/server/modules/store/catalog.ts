@@ -93,6 +93,14 @@ const catalogCache = new LruCache<CacheEntry>(16, serverEnv.STORE_CATALOG_TTL_MS
  */
 const CATALOG_REVALIDATE_INTERVAL_MS = 30_000;
 
+/**
+ * The revalidation in progress per source. Every request that arrived once the
+ * interval had elapsed used to run its own ~1000 stats: fifty desktops loading
+ * together meant fifty thousand stats queued on the four libuv threads, and
+ * every file read in Homeio waited seconds behind them. They now share one.
+ */
+const snapshotRevalidations = new Map<string, Promise<SourceSnapshot>>();
+
 function normalizeCategoryId(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, "-");
 }
@@ -312,7 +320,28 @@ async function buildSourceSnapshot(
   if (cached && Date.now() < cached.revalidateAfter) {
     return cached.snapshot;
   }
+  if (options?.bypassCache) {
+    return revalidateSourceSnapshot(repoPath, source, null);
+  }
 
+  const pending = snapshotRevalidations.get(source.id);
+  if (pending) return pending;
+
+  const revalidation = revalidateSourceSnapshot(repoPath, source, cached).finally(() => {
+    if (snapshotRevalidations.get(source.id) === revalidation) {
+      snapshotRevalidations.delete(source.id);
+    }
+  });
+  snapshotRevalidations.set(source.id, revalidation);
+  return revalidation;
+}
+
+/** Re-reads the catalog when its files changed since `cached` was built, else keeps `cached`. */
+async function revalidateSourceSnapshot(
+  repoPath: string,
+  source: StoreCatalogSource,
+  cached: CacheEntry | null,
+): Promise<SourceSnapshot> {
   const appsDirectory = await resolveAppsDirectory(repoPath);
   const composePaths = await collectComposePaths(appsDirectory);
   const signature = await buildSignature(repoPath, composePaths);
