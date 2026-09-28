@@ -199,6 +199,23 @@ describe("update-service", () => {
     await expect(getSystemUpdateStatus()).rejects.toThrow("(403)");
   });
 
+  it("waits five minutes before asking a rate-limiting GitHub again", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ ok: false, status: 429 } as Response)
+      .mockResolvedValueOnce(releaseResponse("v9.9.9"));
+
+    await expect(getSystemUpdateStatus()).rejects.toThrow("(429)");
+    now.mockReturnValue(1_000_000 + 4 * 60_000);
+    await expect(getSystemUpdateStatus()).rejects.toThrow("(429)");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(1_000_000 + 5 * 60_000);
+    expect((await getSystemUpdateStatus()).latestVersion).toBe("9.9.9");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("schedules the updater through a transient systemd unit, pinned to the latest release", async () => {
     statMock.mockResolvedValueOnce({});
     succeedAllExecFileCalls();

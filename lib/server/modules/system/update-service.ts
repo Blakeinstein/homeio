@@ -24,6 +24,9 @@ const GITHUB_API_HEADERS = {
 // and Settings load asks for the update status. A release a day late is fine;
 // a Settings page that fails because GitHub rate-limited us is not.
 const LATEST_VERSION_TTL_MS = 60 * 60 * 1000;
+// After a failed check with nothing known yet, wait before asking again:
+// retrying on every load keeps a rate-limited IP rate-limited.
+const FAILED_CHECK_BACKOFF_MS = 5 * 60 * 1000;
 
 type LatestVersion = {
   version: string | null;
@@ -39,6 +42,7 @@ type LatestVersionCache = LatestVersion & {
 
 let latestVersionCache: LatestVersionCache | null = null;
 let latestVersionInFlight: Promise<LatestVersion> | null = null;
+let latestVersionFailure: { source: string; error: unknown; retryAt: number } | null = null;
 
 /**
  * A server that sets HOMEIO_REPO_BRANCH follows that branch, as before.
@@ -184,11 +188,14 @@ async function getLatestVersion({ refresh = false } = {}): Promise<LatestVersion
   const source = configuredRepoBranch() ?? "release";
   const cached = latestVersionCache?.source === source ? latestVersionCache : null;
   if (!refresh && cached && cached.expiresAt > Date.now()) return cached;
+  const failure = latestVersionFailure?.source === source ? latestVersionFailure : null;
+  if (!refresh && !cached && failure && failure.retryAt > Date.now()) throw failure.error;
   // Desktops opening together share one GitHub call.
   if (!refresh && latestVersionInFlight) return latestVersionInFlight;
 
   const lookup = fetchLatestVersion()
     .then((version) => {
+      latestVersionFailure = null;
       latestVersionCache = {
         source,
         version,
@@ -198,6 +205,7 @@ async function getLatestVersion({ refresh = false } = {}): Promise<LatestVersion
       return latestVersionCache;
     })
     .catch((error: unknown) => {
+      if (!cached) latestVersionFailure = { source, error, retryAt: Date.now() + FAILED_CHECK_BACKOFF_MS };
       if (refresh || !cached) throw error;
       logServerAction({
         level: "warn",
@@ -219,6 +227,7 @@ async function getLatestVersion({ refresh = false } = {}): Promise<LatestVersion
 export function resetUpdateStatusCacheForTests() {
   latestVersionCache = null;
   latestVersionInFlight = null;
+  latestVersionFailure = null;
 }
 
 export async function getSystemUpdateStatus(
