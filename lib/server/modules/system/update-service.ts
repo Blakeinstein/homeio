@@ -20,6 +20,25 @@ const GITHUB_API_HEADERS = {
   Accept: "application/vnd.github+json",
   "User-Agent": "homeio-update-check",
 };
+// GitHub allows 60 unauthenticated API calls an hour per IP, and every desktop
+// and Settings load asks for the update status. A release a day late is fine;
+// a Settings page that fails because GitHub rate-limited us is not.
+const LATEST_VERSION_TTL_MS = 60 * 60 * 1000;
+
+type LatestVersion = {
+  version: string | null;
+  /** When GitHub was actually asked, which is not now when the answer is cached. */
+  checkedAt: string;
+};
+
+type LatestVersionCache = LatestVersion & {
+  /** The branch followed, or "release": switching invalidates the answer. */
+  source: string;
+  expiresAt: number;
+};
+
+let latestVersionCache: LatestVersionCache | null = null;
+let latestVersionInFlight: Promise<LatestVersion> | null = null;
 
 /**
  * A server that sets HOMEIO_REPO_BRANCH follows that branch, as before.
@@ -156,7 +175,55 @@ async function fetchLatestVersion() {
   return tag ? tag.replace(/^v/i, "") : null;
 }
 
-export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
+/**
+ * The latest version, remembered for an hour. When GitHub cannot be reached the
+ * last known answer is served instead of an error, unless the caller asked for
+ * a fresh check (the "Check now" button), which must report the failure.
+ */
+async function getLatestVersion({ refresh = false } = {}): Promise<LatestVersion> {
+  const source = configuredRepoBranch() ?? "release";
+  const cached = latestVersionCache?.source === source ? latestVersionCache : null;
+  if (!refresh && cached && cached.expiresAt > Date.now()) return cached;
+  // Desktops opening together share one GitHub call.
+  if (!refresh && latestVersionInFlight) return latestVersionInFlight;
+
+  const lookup = fetchLatestVersion()
+    .then((version) => {
+      latestVersionCache = {
+        source,
+        version,
+        checkedAt: new Date().toISOString(),
+        expiresAt: Date.now() + LATEST_VERSION_TTL_MS,
+      };
+      return latestVersionCache;
+    })
+    .catch((error: unknown) => {
+      if (refresh || !cached) throw error;
+      logServerAction({
+        level: "warn",
+        layer: "service",
+        action: "system.updates.latest.stale",
+        status: "error",
+        error,
+        message: "Could not check GitHub for updates; serving the last known version",
+      });
+      return cached;
+    })
+    .finally(() => {
+      if (latestVersionInFlight === lookup) latestVersionInFlight = null;
+    });
+  if (!refresh) latestVersionInFlight = lookup;
+  return lookup;
+}
+
+export function resetUpdateStatusCacheForTests() {
+  latestVersionCache = null;
+  latestVersionInFlight = null;
+}
+
+export async function getSystemUpdateStatus(
+  options: { refresh?: boolean } = {},
+): Promise<SystemUpdateStatus> {
   return withServerTiming(
     {
       layer: "service",
@@ -164,13 +231,13 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
     },
     async () => {
       const currentVersion = await readCurrentVersion();
-      const latestVersion = await fetchLatestVersion();
+      const { version: latestVersion, checkedAt } = await getLatestVersion(options);
 
       return {
         currentVersion,
         latestVersion,
         updateAvailable: latestVersion !== null && compareVersions(latestVersion, currentVersion) > 0,
-        checkedAt: new Date().toISOString(),
+        checkedAt,
         canSelfUpdate: !isContainerRuntime(),
       };
     },

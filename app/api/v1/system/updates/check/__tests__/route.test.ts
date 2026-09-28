@@ -39,6 +39,8 @@ describe("POST /api/v1/system/updates/check", () => {
 
     expect(response.status).toBe(200);
     expect(json.data.latestVersion).toBe("0.1.75");
+    // "Check now" must ask GitHub, not return the cached answer.
+    expect(getSystemUpdateStatus).toHaveBeenCalledWith({ refresh: true });
   });
 
   it("returns 500 when the update check fails", async () => {

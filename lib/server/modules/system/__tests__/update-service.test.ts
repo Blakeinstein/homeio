@@ -21,6 +21,7 @@ import {
   buildRemotePackageJsonUrl,
   compareVersions,
   getSystemUpdateStatus,
+  resetUpdateStatusCacheForTests,
   scheduleSystemUpdate,
 } from "@/lib/server/modules/system/update-service";
 import packageJson from "@/package.json";
@@ -65,6 +66,7 @@ function succeedAllExecFileCalls() {
 describe("update-service", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    resetUpdateStatusCacheForTests();
     execFileMock.mockReset();
     // Release mode unless a test opts into following a branch.
     vi.stubEnv("HOMEIO_REPO_BRANCH", "");
@@ -149,6 +151,52 @@ describe("update-service", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "https://api.github.com/repos/doctor-io/homeio/contents/package.json?ref=v2.0",
     );
+  });
+
+  it("asks GitHub at most once an hour, however many desktops load", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(releaseResponse("v9.9.9"));
+
+    await Promise.all([getSystemUpdateStatus(), getSystemUpdateStatus(), getSystemUpdateStatus()]);
+    now.mockReturnValue(1_000_000 + 59 * 60_000);
+    await getSystemUpdateStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(1_000_000 + 60 * 60_000);
+    await getSystemUpdateStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("serves the last known version when GitHub rate-limits the check", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(releaseResponse("v9.9.9"))
+      .mockResolvedValueOnce({ ok: false, status: 403 } as Response);
+    const first = await getSystemUpdateStatus();
+
+    now.mockReturnValue(1_000_000 + 2 * 60 * 60_000);
+    const second = await getSystemUpdateStatus();
+
+    expect(second.latestVersion).toBe("9.9.9");
+    // The answer is as old as the last successful check, and says so.
+    expect(second.checkedAt).toBe(first.checkedAt);
+  });
+
+  it("asks GitHub and reports its failure when the user checks now", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(releaseResponse("v9.9.9"))
+      .mockResolvedValueOnce({ ok: false, status: 403 } as Response);
+    await getSystemUpdateStatus();
+
+    await expect(getSystemUpdateStatus({ refresh: true })).rejects.toThrow("(403)");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("still fails when GitHub cannot be reached and nothing is known yet", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({ ok: false, status: 403 } as Response);
+
+    await expect(getSystemUpdateStatus()).rejects.toThrow("(403)");
   });
 
   it("schedules the updater through a transient systemd unit, pinned to the latest release", async () => {

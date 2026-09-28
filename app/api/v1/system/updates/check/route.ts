@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const status = await getSystemUpdateStatus();
+        const status = await getSystemUpdateStatus({ refresh: true });
 
         logServerAction({
           layer: "api",
