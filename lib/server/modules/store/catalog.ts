@@ -190,10 +190,18 @@ async function ensureOfficialCatalogRepo(targetPath: string, options?: { forceSy
     await execFileAsync("git", ["-C", absoluteTarget, "reset", "--hard", "origin/HEAD"]);
   }
 
-  await writeStoreCatalogConfig({
-    defaultCatalogPath: absoluteTarget,
-    repoUrl: CASAOS_APPSTORE_REPO_URL,
-  });
+  // This runs on every App Store request. Writing takes the registry lock and
+  // rewrites the file, so every store request used to queue behind the others:
+  // record the catalog only after a sync or when its location changed.
+  const recorded = await readStoreCatalogConfig();
+  const moved =
+    recorded?.defaultCatalogPath !== absoluteTarget || recorded.repoUrl !== CASAOS_APPSTORE_REPO_URL;
+  if (moved || options?.forceSync) {
+    await writeStoreCatalogConfig({
+      defaultCatalogPath: absoluteTarget,
+      repoUrl: CASAOS_APPSTORE_REPO_URL,
+    });
+  }
 
   return absoluteTarget;
 }

@@ -25,6 +25,7 @@ vi.mock("node:fs/promises", async () => {
 import {
   readStoreCatalogConfig,
   readStoreCatalogSources,
+  writeStoreCatalogConfig,
 } from "@/lib/server/modules/store/catalog-config";
 import { ensureDataRootDirectories } from "@/lib/server/storage/data-root";
 
@@ -151,6 +152,32 @@ x-casaos:
 
     await getStoreCatalogSnapshot();
     expect(vi.mocked(stat).mock.calls.length).toBe(statCallsAfterFirst);
+  });
+
+  it("does not rewrite the catalog registry on every store request", async () => {
+    // Each write takes the registry lock: store requests used to queue behind each other.
+    const { getStoreCatalogSnapshot } = await import("@/lib/server/modules/store/catalog");
+
+    await getStoreCatalogSnapshot();
+    await getStoreCatalogSnapshot();
+
+    expect(writeStoreCatalogConfig).not.toHaveBeenCalled();
+  });
+
+  it("records the catalog when its location changed", async () => {
+    vi.mocked(readStoreCatalogConfig).mockResolvedValue({
+      defaultCatalogPath: "/somewhere/else",
+      repoUrl: "https://github.com/IceWhaleTech/CasaOS-AppStore",
+      updatedAt: new Date().toISOString(),
+    });
+    const { getStoreCatalogSnapshot } = await import("@/lib/server/modules/store/catalog");
+
+    await getStoreCatalogSnapshot();
+
+    expect(writeStoreCatalogConfig).toHaveBeenCalledWith({
+      defaultCatalogPath: repoRoot,
+      repoUrl: "https://github.com/IceWhaleTech/CasaOS-AppStore",
+    });
   });
 
   it("shares one revalidation between requests arriving together", async () => {
