@@ -8,6 +8,7 @@ import os from "node:os";
 import { statfs } from "node:fs/promises";
 import path from "node:path";
 import si from "systeminformation";
+import { isContainerRuntime } from "@/lib/server/modules/system/update-service";
 import {
   createDiskRateTracker,
   readDiskCounters,
@@ -763,6 +764,7 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
       pid: process.pid,
       uptimeSeconds: process.uptime(),
       nodeVersion: process.version,
+      runtime: isContainerRuntime() ? "docker" : "host",
     },
   };
 }

@@ -248,6 +248,9 @@ export type SystemMetricsSnapshot = {
     pid: number;
     uptimeSeconds: number;
     nodeVersion: string;
+    // How Homeio runs, so the desktop can name the right restart command once
+    // the server stops answering. Missing from servers older than 1.10.
+    runtime?: "docker" | "host";
   };
 };
 
