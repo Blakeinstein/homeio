@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { serverEnv } from "@/lib/server/env";
 import type {
@@ -50,7 +50,15 @@ const ANSI = {
   gray: "\x1b[90m",
 } as const;
 
+// Lines logged together are appended together: one file write per burst, not
+// one open/write/close per line queued behind each other under load. The file
+// rotates past LOG_FILE_MAX_BYTES, keeping the previous one as .1, so it cannot
+// fill the disk of a small home server.
+const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
+
 let writeQueue: Promise<void> = Promise.resolve();
+let pendingLines: string[] = [];
+let logFileBytes: number | null = null;
 let logDirectoryReady = false;
 
 function getServerLogLevel(): LogLevel {
@@ -148,32 +156,56 @@ function writeConsole(entry: StructuredLogEntry) {
   console.log(line);
 }
 
+async function readFileSize(filePath: string) {
+  try {
+    return (await stat(filePath)).size;
+  } catch {
+    return 0;
+  }
+}
+
+async function flushPendingLines() {
+  const chunk = pendingLines.join("");
+  pendingLines = [];
+  const chunkBytes = Buffer.byteLength(chunk, "utf8");
+  const filePath = getLogFilePath();
+
+  await ensureLogDirectory();
+  logFileBytes ??= await readFileSize(filePath);
+  if (logFileBytes > 0 && logFileBytes + chunkBytes > LOG_FILE_MAX_BYTES) {
+    await rename(filePath, `${filePath}.1`);
+    logFileBytes = 0;
+  }
+  await appendFile(filePath, chunk, "utf8");
+  logFileBytes += chunkBytes;
+}
+
+function reportFileWriteFailure(error: unknown) {
+  // The size is unknown after a failed write or rotation: read it again next time.
+  logFileBytes = null;
+  const fallback: StructuredLogEntry = {
+    timestamp: new Date().toISOString(),
+    runtime: "server",
+    level: "error",
+    layer: "system",
+    action: "log.file.write",
+    status: "error",
+    message: "Failed writing structured log to file",
+    error: serializeError(error),
+  };
+
+  console.error(JSON.stringify(fallback));
+}
+
 function writeToFile(entry: StructuredLogEntry) {
   if (process.env.NODE_ENV === "test") return;
   if (serverEnv.LOG_TO_FILE === false) return;
 
-  const line = `${JSON.stringify(entry)}\n`;
-  const filePath = getLogFilePath();
-
-  writeQueue = writeQueue
-    .then(async () => {
-      await ensureLogDirectory();
-      await appendFile(filePath, line, "utf8");
-    })
-    .catch((error) => {
-      const fallback: StructuredLogEntry = {
-        timestamp: new Date().toISOString(),
-        runtime: "server",
-        level: "error",
-        layer: "system",
-        action: "log.file.write",
-        status: "error",
-        message: "Failed writing structured log to file",
-        error: serializeError(error),
-      };
-
-      console.error(JSON.stringify(fallback));
-    });
+  pendingLines.push(`${JSON.stringify(entry)}\n`);
+  // The first line of a batch schedules its flush; later ones join the batch.
+  if (pendingLines.length === 1) {
+    writeQueue = writeQueue.then(flushPendingLines).catch(reportFileWriteFailure);
+  }
 }
 
 export function logServerAction(input: ServerLogInput) {
