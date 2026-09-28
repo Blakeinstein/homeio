@@ -1,9 +1,5 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
 
 vi.mock("@/lib/server/modules/system/power-schedule", () => ({
   deleteScheduledRebootArtifacts: vi.fn(),
@@ -15,7 +11,7 @@ vi.mock("@/lib/server/modules/system/power-service", () => ({
 }));
 
 import { POST } from "@/app/api/v1/system/power/factory-reset/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
+import { requireApiSession } from "@/lib/server/modules/auth/api";
 import { deleteScheduledRebootArtifacts } from "@/lib/server/modules/system/power-schedule";
 import {
   deleteFactoryResetArtifacts,
@@ -24,13 +20,6 @@ import {
 
 describe("POST /api/v1/system/power/factory-reset", () => {
   it("returns 202 and schedules factory reset for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(deleteScheduledRebootArtifacts).mockResolvedValueOnce(undefined);
     vi.mocked(deleteFactoryResetArtifacts).mockResolvedValueOnce(undefined);
     vi.mocked(scheduleFactoryReset).mockResolvedValueOnce(undefined);
@@ -55,7 +44,10 @@ describe("POST /api/v1/system/power/factory-reset", () => {
   });
 
   it("returns 401 when the session is missing or invalid", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce(null);
+    vi.mocked(requireApiSession).mockResolvedValueOnce({
+      session: null,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
 
     const request = new NextRequest("http://localhost/api/v1/system/power/factory-reset", {
       method: "POST",
@@ -68,13 +60,6 @@ describe("POST /api/v1/system/power/factory-reset", () => {
   });
 
   it("returns 500 when factory reset scheduling fails", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(deleteScheduledRebootArtifacts).mockResolvedValueOnce(undefined);
     vi.mocked(deleteFactoryResetArtifacts).mockResolvedValueOnce(undefined);
     vi.mocked(scheduleFactoryReset).mockRejectedValueOnce(new Error("spawn failed"));

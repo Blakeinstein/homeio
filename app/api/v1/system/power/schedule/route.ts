@@ -5,8 +5,6 @@ import {
   logServerAction,
   withServerTiming,
 } from "@/lib/server/logging/logger";
-import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 import {
   getScheduledRebootConfig,
@@ -37,25 +35,6 @@ function isSchedulePayload(value: unknown): value is SchedulePayload {
   return typeof payload.enabled === "boolean" && validFrequency && validDay && validTime;
 }
 
-async function authenticate(request: NextRequest, requestId: string, action: string) {
-  const sessionToken = request.cookies.get(getAuthCookieName())?.value;
-  const session = await authenticateSession(sessionToken);
-
-  if (!session) {
-    logServerAction({
-      level: "warn",
-      layer: "api",
-      action: `${action}.response`,
-      status: "error",
-      requestId,
-      message: "Unauthorized power schedule request",
-    });
-    return null;
-  }
-
-  return session;
-}
-
 export async function GET(request: NextRequest) {
   const apiSession = await requireApiSession(request);
   if (apiSession.response) return apiSession.response;
@@ -69,11 +48,6 @@ export async function GET(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticate(request, requestId, "system.power.schedule.get");
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
         const config = await getScheduledRebootConfig();
 
         return NextResponse.json({ data: config });
@@ -107,10 +81,7 @@ export async function PUT(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticate(request, requestId, "system.power.schedule.put");
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        const session = apiSession.session;
 
         const body = await request.json().catch(() => null);
         if (!isSchedulePayload(body)) {

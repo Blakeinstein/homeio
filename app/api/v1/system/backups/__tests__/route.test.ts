@@ -1,27 +1,16 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
 
 vi.mock("@/lib/server/modules/system/backup-service", () => ({
   getSystemBackupsSnapshot: vi.fn(),
 }));
 
 import { GET } from "@/app/api/v1/system/backups/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
+import { requireApiSession } from "@/lib/server/modules/auth/api";
 import { getSystemBackupsSnapshot } from "@/lib/server/modules/system/backup-service";
 
 describe("GET /api/v1/system/backups", () => {
   it("returns backups snapshot for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(getSystemBackupsSnapshot).mockResolvedValueOnce({
       settings: {
         enabled: false,
@@ -48,7 +37,10 @@ describe("GET /api/v1/system/backups", () => {
   });
 
   it("returns 401 for unauthenticated requests", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce(null);
+    vi.mocked(requireApiSession).mockResolvedValueOnce({
+      session: null,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
 
     const response = await GET(new NextRequest("http://localhost/api/v1/system/backups"));
 

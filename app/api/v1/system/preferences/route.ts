@@ -5,8 +5,6 @@ import {
   logServerAction,
   withServerTiming,
 } from "@/lib/server/logging/logger";
-import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import {
   getSystemPreferences,
   updateSystemPreferences,
@@ -22,25 +20,6 @@ function isSystemPreferencesPayload(value: unknown): value is SystemPreferences 
   return typeof payload.hostname === "string" && typeof payload.timezone === "string";
 }
 
-async function authenticateRequest(request: NextRequest, requestId: string) {
-  const sessionToken = request.cookies.get(getAuthCookieName())?.value;
-  const session = await authenticateSession(sessionToken);
-
-  if (!session) {
-    logServerAction({
-      level: "warn",
-      layer: "api",
-      action: "system.preferences.response",
-      status: "error",
-      requestId,
-      message: "Unauthorized system preferences request",
-    });
-    return null;
-  }
-
-  return session;
-}
-
 export async function GET(request: NextRequest) {
   const apiSession = await requireApiSession(request);
   if (apiSession.response) return apiSession.response;
@@ -54,10 +33,7 @@ export async function GET(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticateRequest(request, requestId);
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        const session = apiSession.session;
 
         const preferences = await getSystemPreferences();
 
@@ -106,10 +82,7 @@ export async function PUT(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticateRequest(request, requestId);
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        const session = apiSession.session;
 
         const body = await request.json().catch(() => null);
         if (!isSystemPreferencesPayload(body)) {

@@ -5,8 +5,6 @@ import {
   logServerAction,
   withServerTiming,
 } from "@/lib/server/logging/logger";
-import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import {
   getSystemSecuritySettings,
   updateSystemSecuritySettings,
@@ -29,25 +27,6 @@ function isSystemSecurityPayload(value: unknown): value is SystemSecuritySetting
   );
 }
 
-async function authenticateRequest(request: NextRequest, requestId: string) {
-  const sessionToken = request.cookies.get(getAuthCookieName())?.value;
-  const session = await authenticateSession(sessionToken);
-
-  if (!session) {
-    logServerAction({
-      level: "warn",
-      layer: "api",
-      action: "system.security.response",
-      status: "error",
-      requestId,
-      message: "Unauthorized system security request",
-    });
-    return null;
-  }
-
-  return session;
-}
-
 function isValidationError(error: unknown) {
   return error instanceof Error && error.message.toLowerCase().includes("invalid");
 }
@@ -65,10 +44,7 @@ export async function GET(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticateRequest(request, requestId);
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        const session = apiSession.session;
 
         const settings = await getSystemSecuritySettings();
 
@@ -121,10 +97,7 @@ export async function PUT(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticateRequest(request, requestId);
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        const session = apiSession.session;
 
         const body = await request.json().catch(() => null);
         if (!isSystemSecurityPayload(body)) {

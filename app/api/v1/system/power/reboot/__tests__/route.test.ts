@@ -1,9 +1,5 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
 
 vi.mock("@/lib/server/modules/system/power-service", () => ({
   scheduleSystemReboot: vi.fn(),
@@ -14,19 +10,12 @@ vi.mock("@/lib/server/modules/system/power-action-events", () => ({
 }));
 
 import { POST } from "@/app/api/v1/system/power/reboot/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
+import { requireApiSession } from "@/lib/server/modules/auth/api";
 import { scheduleSystemReboot } from "@/lib/server/modules/system/power-service";
 import { emitPowerAction } from "@/lib/server/modules/system/power-action-events";
 
 describe("POST /api/v1/system/power/reboot", () => {
   it("returns 202 and schedules reboot for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(scheduleSystemReboot).mockResolvedValueOnce(undefined);
 
     const request = new NextRequest("http://localhost/api/v1/system/power/reboot", {
@@ -52,7 +41,10 @@ describe("POST /api/v1/system/power/reboot", () => {
   });
 
   it("returns 401 when the session is missing or invalid", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce(null);
+    vi.mocked(requireApiSession).mockResolvedValueOnce({
+      session: null,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
 
     const request = new NextRequest("http://localhost/api/v1/system/power/reboot", {
       method: "POST",
@@ -66,13 +58,6 @@ describe("POST /api/v1/system/power/reboot", () => {
 
   it("returns 500 when reboot scheduling fails", async () => {
     vi.mocked(emitPowerAction).mockClear();
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(scheduleSystemReboot).mockRejectedValueOnce(
       new Error("spawn failed"),
     );

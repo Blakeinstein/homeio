@@ -1,27 +1,15 @@
 import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
-
 vi.mock("@/lib/server/modules/system/backup-service", () => ({
   runSystemBackupNow: vi.fn(),
 }));
 
 import { POST } from "@/app/api/v1/system/backups/run/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { runSystemBackupNow } from "@/lib/server/modules/system/backup-service";
 
 describe("POST /api/v1/system/backups/run", () => {
   it("returns 202 and backup metadata for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(runSystemBackupNow).mockResolvedValueOnce({
       id: "backup-1",
       createdAt: "2026-03-08T09:00:00.000Z",

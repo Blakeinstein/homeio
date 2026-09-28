@@ -1,27 +1,15 @@
 import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
-
 vi.mock("@/lib/server/modules/system/update-service", () => ({
   getSystemUpdateStatus: vi.fn(),
 }));
 
 import { POST } from "@/app/api/v1/system/updates/check/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { getSystemUpdateStatus } from "@/lib/server/modules/system/update-service";
 
 describe("POST /api/v1/system/updates/check", () => {
   it("checks Homeio updates for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(getSystemUpdateStatus).mockResolvedValueOnce({
       currentVersion: "0.1.74",
       latestVersion: "0.1.75",
@@ -44,13 +32,6 @@ describe("POST /api/v1/system/updates/check", () => {
   });
 
   it("returns 500 when the update check fails", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(getSystemUpdateStatus).mockRejectedValueOnce(new Error("fetch failed"));
 
     const response = await POST(
