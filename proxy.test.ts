@@ -187,6 +187,48 @@ describe("middleware auth guard", () => {
     expect(response.headers.get("x-auth-entry")).toBe("/register");
   });
 
+  it("shares one auth status lookup between visitors arriving together", async () => {
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ data: { hasUsers: true } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    await Promise.all(Array.from({ length: 5 }, () => proxy(new NextRequest("http://localhost/"))));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("remembers that accounts exist for a minute, but that none exist only briefly", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const answer = (hasUsers: boolean) =>
+      new Response(JSON.stringify({ data: { hasUsers } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    const fetchMock = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(answer(false))
+      .mockResolvedValueOnce(answer(true))
+      .mockResolvedValueOnce(answer(true));
+
+    await proxy(new NextRequest("http://localhost/"));
+    // The first account may be registered any moment: "none" is re-checked soon.
+    now.mockReturnValue(1_000_000 + 5_000);
+    await proxy(new NextRequest("http://localhost/"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    now.mockReturnValue(1_000_000 + 5_000 + 59_000);
+    await proxy(new NextRequest("http://localhost/"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    now.mockReturnValue(1_000_000 + 5_000 + 60_000);
+    await proxy(new NextRequest("http://localhost/"));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("sends you to login, not register, when the auth status lookup fails", async () => {
     // This used to answer /register. Not knowing whether accounts exist is not
     // the same as knowing there are none, and treating it as "fresh install"

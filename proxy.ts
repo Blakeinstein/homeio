@@ -10,16 +10,26 @@ const DEMO_BLOCKED_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
 
 const PUBLIC_ROUTES = new Set(["/login", "/register"]);
 const RECOVERY_ROUTES = new Set(["/updating"]);
-const AUTH_STATUS_CACHE_MS = 5_000;
+// Whether any account exists changes once in an install's life, at the first
+// registration, so a "yes" is kept for a minute. A "no" is kept only briefly:
+// the first account must be seen at once, or its owner would be sent back to
+// /register with their new session cleared.
+const AUTH_STATUS_WITH_USERS_CACHE_MS = 60_000;
+const AUTH_STATUS_WITHOUT_USERS_CACHE_MS = 5_000;
 let authStatusCache:
   | {
       hasUsers: boolean;
       expiresAt: number;
     }
   | null = null;
+// Visitors arriving together share one lookup. Each lookup is an HTTP request
+// back into this server and a database query; one per visitor exhausted the
+// connection pool under load.
+let authStatusInFlight: Promise<boolean> | null = null;
 
 export function resetAuthStatusCacheForTests() {
   authStatusCache = null;
+  authStatusInFlight = null;
 }
 
 function isPublicApiRoute(pathname: string) {
@@ -94,11 +104,17 @@ export async function verifySessionTokenInMiddleware(
 }
 
 async function hasUsersInDb(request: NextRequest) {
-  const now = Date.now();
-  if (authStatusCache && authStatusCache.expiresAt > now) {
+  if (authStatusCache && authStatusCache.expiresAt > Date.now()) {
     return authStatusCache.hasUsers;
   }
 
+  authStatusInFlight ??= lookUpHasUsers(request).finally(() => {
+    authStatusInFlight = null;
+  });
+  return authStatusInFlight;
+}
+
+async function lookUpHasUsers(request: NextRequest) {
   try {
     const response = await fetch(new URL("/api/auth/status", request.url), {
       method: "GET",
@@ -118,7 +134,8 @@ async function hasUsersInDb(request: NextRequest) {
     const hasUsers = typeof json.data?.hasUsers === "boolean" ? json.data.hasUsers : false;
     authStatusCache = {
       hasUsers,
-      expiresAt: now + AUTH_STATUS_CACHE_MS,
+      expiresAt:
+        Date.now() + (hasUsers ? AUTH_STATUS_WITH_USERS_CACHE_MS : AUTH_STATUS_WITHOUT_USERS_CACHE_MS),
     };
     return hasUsers;
   } catch {
