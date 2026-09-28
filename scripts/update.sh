@@ -605,7 +605,10 @@ EOF
 	cat >"${nginx_conf}" <<EOF
 upstream homeio_backend {
     server 127.0.0.1:${APP_PORT};
-    keepalive 32;
+    # Idle connections kept per nginx worker for reuse. With too few, every
+    # request past the pool opened a fresh connection to Homeio and, at a few
+    # hundred desktops, Homeio's accept queue overflowed into 502s.
+    keepalive 128;
     # Homeio keeps idle connections open longer than this, so nginx is always
     # the side that closes them (see lib/server/http/keep-alive.ts).
     keepalive_timeout 60s;

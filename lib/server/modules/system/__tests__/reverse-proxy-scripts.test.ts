@@ -16,6 +16,8 @@ describe("reverse proxy scripts", () => {
       // lib/server/http/keep-alive.ts relies on this value: Homeio must be the
       // side that keeps idle connections longer, or visitors get 502s.
       expect(script).toContain(`keepalive_timeout ${NGINX_UPSTREAM_KEEPALIVE_MS / 1000}s;`);
+      // A pool too small makes nginx open a new connection per request under load.
+      expect(script).toContain("keepalive 128;");
     },
   );
 

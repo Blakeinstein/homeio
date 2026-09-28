@@ -8,6 +8,13 @@ import type { Server as HttpServer } from "node:http";
 export const NGINX_UPSTREAM_KEEPALIVE_MS = 60_000;
 
 /**
+ * Connections waiting to be accepted while the event loop is busy. Node's
+ * default of 511 overflowed under load (thousands of drops a minute, each a
+ * 502); the kernel caps it at net.core.somaxconn, 4096 on current distributions.
+ */
+export const LISTEN_BACKLOG = 4096;
+
+/**
  * Node closes idle keep-alive sockets after 5s by default, but nginx reuses
  * them for up to a minute. Under load nginx then sends a request on a socket
  * Node is closing, and the visitor gets a 502 ("Connection reset by peer").

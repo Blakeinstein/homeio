@@ -3,7 +3,7 @@ import next from "next";
 import { parse } from "node:url";
 import compression from "compression";
 import { closeServerGracefully } from "./lib/server/http/graceful-shutdown";
-import { configureUpstreamKeepAlive } from "./lib/server/http/keep-alive";
+import { LISTEN_BACKLOG, configureUpstreamKeepAlive } from "./lib/server/http/keep-alive";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname =
@@ -128,7 +128,7 @@ async function main() {
     void shutdown("SIGTERM");
   });
 
-  server.listen(port, hostname, (error?: Error) => {
+  server.listen(port, hostname, LISTEN_BACKLOG, (error?: Error) => {
     if (error) throw error;
     console.log(`> Ready on http://${hostname}:${port}`);
   });
