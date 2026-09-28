@@ -91,19 +91,24 @@ describe("useServerConnection", () => {
     expect(hook.result.current.phase).toBe("online");
   });
 
-  it("ignores a single failed check", async () => {
+  it("shows the screen on the first failed check after the stream drops", async () => {
     const { server, hook } = setup();
 
+    // A service restart: Homeio is away for about a second.
     server.up = false;
     act(() => dispatchSystemStreamStatus("disconnected"));
     await advance(0);
+
+    expect(hook.result.current.phase).toBe("lost");
+
+    server.restart();
     server.up = true;
     await advance(2_000);
 
-    expect(hook.result.current.phase).toBe("online");
+    expect(hook.result.current.phase).toBe("restored");
   });
 
-  it("shows the screen after two failed checks and hides it when the same process is back", async () => {
+  it("hides the screen without a reload when the same process is back", async () => {
     const { server, client, hook } = setup();
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
 

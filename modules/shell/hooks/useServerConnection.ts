@@ -15,9 +15,10 @@ export type ServerConnectionPhase = "online" | "lost" | "restored";
 
 export type ServerRuntime = "docker" | "host" | null;
 
-// Two failed checks in a row before anything is shown, so a dropped stream or
-// a slow response never flashes the screen.
-const FAILURES_BEFORE_LOST = 2;
+// The screen shows on the first failed check. It only runs once the stream
+// has dropped (or the browser went offline), so that is already a second
+// signal: a restart that keeps Homeio away for a second or two still shows
+// "Reconnecting" and then "back", instead of nothing at all.
 const FAST_RETRY_MS = 2_000;
 const SLOW_RETRY_MS = 5_000;
 const FAST_RETRY_WINDOW_MS = 60_000;
@@ -119,7 +120,6 @@ export function useServerConnection(enabled: boolean) {
   const probingRef = useRef(false);
   const inFlightRef = useRef(false);
   const phaseRef = useRef<ServerConnectionPhase>("online");
-  const failuresRef = useRef(0);
   const firstFailureAtRef = useRef<number | null>(null);
   const identityBeforeRef = useRef<ProcessIdentity | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -142,7 +142,6 @@ export function useServerConnection(enabled: boolean) {
   const reset = useCallback(() => {
     clearTimer();
     probingRef.current = false;
-    failuresRef.current = 0;
     firstFailureAtRef.current = null;
     setLostSince(null);
     setNextCheckAt(null);
@@ -202,10 +201,9 @@ export function useServerConnection(enabled: boolean) {
     }
 
     const now = Date.now();
-    failuresRef.current += 1;
     firstFailureAtRef.current ??= now;
 
-    if (phaseRef.current === "online" && failuresRef.current >= FAILURES_BEFORE_LOST) {
+    if (phaseRef.current === "online") {
       const snapshot = queryClient.getQueryData<SystemMetricsSnapshot>(queryKeys.systemMetrics);
       identityBeforeRef.current = identify(snapshot);
       setRuntime(snapshot?.process?.runtime ?? null);
