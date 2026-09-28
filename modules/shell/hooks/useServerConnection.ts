@@ -112,8 +112,6 @@ export function useServerConnection(enabled: boolean) {
   const [phase, setPhase] = useState<ServerConnectionPhase>("online");
   const [isBrowserOffline, setIsBrowserOffline] = useState(false);
   const [lostSince, setLostSince] = useState<number | null>(null);
-  const [nextCheckAt, setNextCheckAt] = useState<number | null>(null);
-  const [isChecking, setIsChecking] = useState(false);
   const [serverRestarted, setServerRestarted] = useState(false);
   const [runtime, setRuntime] = useState<ServerRuntime>(null);
 
@@ -144,8 +142,6 @@ export function useServerConnection(enabled: boolean) {
     probingRef.current = false;
     firstFailureAtRef.current = null;
     setLostSince(null);
-    setNextCheckAt(null);
-    setIsChecking(false);
     setServerRestarted(false);
     updatePhase("online");
   }, [clearTimer, updatePhase]);
@@ -186,13 +182,11 @@ export function useServerConnection(enabled: boolean) {
 
     probingRef.current = true;
     inFlightRef.current = true;
-    setIsChecking(true);
     let healthy = await isHealthy();
     if (healthy && phaseRef.current === "lost" && enabledRef.current) {
       healthy = await recover();
     }
     inFlightRef.current = false;
-    setIsChecking(false);
     if (!enabledRef.current) return;
 
     if (healthy) {
@@ -213,7 +207,6 @@ export function useServerConnection(enabled: boolean) {
 
     const delay =
       now - firstFailureAtRef.current < FAST_RETRY_WINDOW_MS ? FAST_RETRY_MS : SLOW_RETRY_MS;
-    setNextCheckAt(now + delay);
     timerRef.current = setTimeout(() => void probe(), delay);
   }, [clearTimer, queryClient, recover, reset, updatePhase]);
 
@@ -270,8 +263,6 @@ export function useServerConnection(enabled: boolean) {
     phase,
     isBrowserOffline,
     lostSince,
-    nextCheckAt,
-    isChecking,
     serverRestarted,
     runtime,
     logoSrc,

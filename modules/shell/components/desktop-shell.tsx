@@ -1003,8 +1003,6 @@ function DesktopShellInner() {
           phase={serverConnection.phase}
           isBrowserOffline={serverConnection.isBrowserOffline}
           lostSince={serverConnection.lostSince}
-          nextCheckAt={serverConnection.nextCheckAt}
-          isChecking={serverConnection.isChecking}
           serverRestarted={serverConnection.serverRestarted}
           runtime={serverConnection.runtime}
           logoSrc={serverConnection.logoSrc}

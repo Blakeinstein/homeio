@@ -19,8 +19,6 @@ type ConnectionLostScreenProps = {
   phase: Exclude<ServerConnectionPhase, "online">;
   isBrowserOffline: boolean;
   lostSince: number | null;
-  nextCheckAt: number | null;
-  isChecking: boolean;
   serverRestarted: boolean;
   runtime: ServerRuntime;
   logoSrc: string;
@@ -185,8 +183,6 @@ export function ConnectionLostScreen({
   phase,
   isBrowserOffline,
   lostSince,
-  nextCheckAt,
-  isChecking,
   serverRestarted,
   runtime,
   logoSrc,
@@ -203,7 +199,6 @@ export function ConnectionLostScreen({
   const elapsedMs = lostSince ? now - lostSince : 0;
   const isLongWait = !restored && !isBrowserOffline && elapsedMs >= LONG_WAIT_MS;
   const copy = getCopy(phase, isBrowserOffline, isLongWait, serverRestarted);
-  const secondsToNextCheck = nextCheckAt ? Math.max(0, Math.ceil((nextCheckAt - now) / 1_000)) : null;
   const commands = runtime ? [RESTART_COMMANDS[runtime]] : [RESTART_COMMANDS.host, RESTART_COMMANDS.docker];
 
   return (
@@ -296,20 +291,16 @@ export function ConnectionLostScreen({
                     }`}
                   />
                 </span>
+                {/* No countdown to the next check: with a try every two
+                    seconds it only loops 3, 2, 1 and reads as a glitch. */}
                 <span className="tabular-nums">
                   {lostSince ? `Offline for ${formatDuration(elapsedMs)}` : "Offline"}
-                  {" · "}
-                  {isChecking || secondsToNextCheck === 0
-                    ? "checking…"
-                    : secondsToNextCheck !== null
-                      ? `next try in ${secondsToNextCheck}s`
-                      : "waiting"}
+                  {" · reconnecting automatically"}
                 </span>
                 <button
                   type="button"
                   onClick={onCheckNow}
-                  disabled={isChecking}
-                  className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-medium text-foreground/85 transition hover:bg-white/14 disabled:opacity-50"
+                  className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-medium text-foreground/85 transition hover:bg-white/14"
                 >
                   Try now
                 </button>
