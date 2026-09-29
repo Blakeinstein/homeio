@@ -1105,6 +1105,9 @@ server {
     listen [::]:${PUBLIC_PORT};
     server_name _;
 
+    # Do not advertise the nginx version in responses or error pages.
+    server_tokens off;
+
     client_max_body_size 10G;
     client_body_timeout 3600s;
     client_header_timeout 3600s;
