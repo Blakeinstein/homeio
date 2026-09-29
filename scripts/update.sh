@@ -316,8 +316,11 @@ After=network.target
 Type=simple
 User=root
 EnvironmentFile=${ENV_FILE}
-Environment=UPLOAD_SERVER_ADDR=/run/home-server/upload.sock
-RuntimeDirectory=home-server
+Environment=UPLOAD_SERVER_ADDR=/run/home-server-upload/upload.sock
+# A directory of its own: the DBus helper owns /run/home-server (mode 0770), and
+# sharing it meant whichever service started last set its mode, and stopping
+# either one deleted the other's socket, leaving nginx unable to reach uploads.
+RuntimeDirectory=home-server-upload
 RuntimeDirectoryMode=0755
 ExecStart=${INSTALL_DIR}/bin/upload-server
 Restart=always
@@ -641,8 +644,15 @@ server {
     }
 
     # Route file uploads directly to the Go upload server, bypassing Next.js.
+    # Next.js still decides who may upload: nginx asks it first, so the session
+    # is checked against the database and demo mode blocks uploads like every
+    # other write (app/api/v1/files/upload/authorize).
     location = /api/v1/files/upload {
-        proxy_pass http://unix:/run/home-server/upload.sock:/upload;
+        auth_request /__homeio_upload_authorize;
+        error_page 401 = @homeio_upload_unauthorized;
+        error_page 403 = @homeio_upload_forbidden;
+
+        proxy_pass http://unix:/run/home-server-upload/upload.sock:/upload;
         proxy_http_version 1.1;
         proxy_request_buffering off;
         proxy_buffering off;
@@ -651,6 +661,27 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
+    location = /__homeio_upload_authorize {
+        internal;
+        proxy_pass http://homeio_backend/api/v1/files/upload/authorize;
+        proxy_http_version 1.1;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Content-Type "";
+        proxy_set_header Connection "";
+        proxy_set_header Host \$host;
+    }
+
+    location @homeio_upload_unauthorized {
+        default_type application/json;
+        return 401 '{"error":"Unauthorized"}';
+    }
+
+    location @homeio_upload_forbidden {
+        default_type application/json;
+        return 403 '{"error":"This action is not available in demo mode."}';
     }
 
     location / {
