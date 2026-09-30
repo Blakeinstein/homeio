@@ -744,6 +744,7 @@ function DesktopShellInner() {
           <AppGrid
             iconSize={appIconSize}
             animationsEnabled={appearance.animationsEnabled}
+            onOpenCustomInstall={() => openWindow("custom-install")}
             onViewLogs={(target) => setLogsTarget(target)}
             onOpenTerminal={({ containerName }) =>
               requestTerminalCommand(

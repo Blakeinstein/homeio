@@ -32,14 +32,20 @@ type AppGridMenuAction =
 
 type UseAppGridControllerOptions = {
   onCopyUrl?: (target: AppActionTarget) => void;
+  onOpenCustomInstall?: () => void;
   onOpenDashboard?: (target: AppActionTarget) => void;
   onOpenSettings?: (target: AppActionTarget) => void;
   onOpenTerminal?: (target: AppActionTarget) => void;
   onViewLogs?: (target: AppActionTarget) => void;
 };
 
+type AppGridContextMenuState =
+  | { kind: "app"; x: number; y: number; appId: string }
+  | { kind: "background"; x: number; y: number };
+
 export function useAppGridController({
   onCopyUrl,
+  onOpenCustomInstall,
   onOpenDashboard,
   onOpenSettings,
   onOpenTerminal,
@@ -66,11 +72,8 @@ export function useAppGridController({
   const [uninstallError, setUninstallError] = useState<string | null>(null);
   const [uninstallPending, setUninstallPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    appId: string;
-  } | null>(null);
+  const [contextMenu, setContextMenu] =
+    useState<AppGridContextMenuState | null>(null);
 
   const installedCatalogApps = useMemo(
     () => installedCatalogQuery.data?.apps ?? [],
@@ -121,9 +124,11 @@ export function useAppGridController({
   const isAppsError =
     installedAppsQuery.isError && installedCatalogQuery.isError;
   const primaryOperation = activeOperations[0] ?? null;
-  const menuApp = contextMenu
-    ? (apps.find((app) => app.id === contextMenu.appId) ?? null)
-    : null;
+  const menuApp =
+    contextMenu?.kind === "app"
+      ? (apps.find((app) => app.id === contextMenu.appId) ?? null)
+      : null;
+  const isBackgroundContextMenuOpen = contextMenu?.kind === "background";
   const uninstallTarget = uninstallAppId
     ? (apps.find((app) => app.id === uninstallAppId) ?? null)
     : null;
@@ -169,11 +174,25 @@ export function useAppGridController({
 
   function openContextMenu(event: React.MouseEvent, app: AppItem) {
     event.preventDefault();
+    event.stopPropagation();
     setActionError(null);
     setActiveAppId(app.id);
     const x = Math.min(event.clientX, window.innerWidth - 220);
     const y = Math.min(event.clientY, window.innerHeight - 320);
-    setContextMenu({ x, y, appId: app.id });
+    setContextMenu({ kind: "app", x, y, appId: app.id });
+  }
+
+  function openBackgroundContextMenu(event: React.MouseEvent) {
+    event.preventDefault();
+    setActionError(null);
+    const x = Math.min(event.clientX, window.innerWidth - 220);
+    const y = Math.min(event.clientY, window.innerHeight - 160);
+    setContextMenu({ kind: "background", x, y });
+  }
+
+  function handleInstallCustomApp() {
+    onOpenCustomInstall?.();
+    closeContextMenu();
   }
 
   async function openDashboardForApp(app: AppItem) {
@@ -331,13 +350,16 @@ export function useAppGridController({
     closeContextMenu,
     confirmUninstall,
     contextMenu,
+    handleInstallCustomApp,
     handleMenuAction,
     handleUninstallDialogOpenChange,
     isAppsError,
     isAppsLoading,
+    isBackgroundContextMenuOpen,
     isMenuAppBusy,
     menuApp,
     menuHasDashboardUrl,
+    openBackgroundContextMenu,
     openContextMenu,
     openDashboardForApp,
     primaryOperation,
