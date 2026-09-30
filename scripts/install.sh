@@ -1309,7 +1309,12 @@ redirect_to_update_if_installed() {
 	echo ""
 
 	resolve_repo_ref
-	local update_url="https://raw.githubusercontent.com/doctor-io/homeio/${REPO_BRANCH}/scripts/update.sh"
+	# Derive the raw.githubusercontent.com path from REPO_URL (which honors
+	# HOMEIO_REPO_URL) instead of hardcoding the upstream repo -- otherwise
+	# installing from a fork always redirects back to upstream's update.sh.
+	local repo_path
+	repo_path="$(echo "${REPO_URL}" | sed -E 's#^https://github\.com/##; s#\.git$##')"
+	local update_url="https://raw.githubusercontent.com/${repo_path}/${REPO_BRANCH}/scripts/update.sh"
 	local tmp_update
 	tmp_update="$(mktemp /tmp/homeio-update-XXXXXX.sh)"
 
@@ -1321,8 +1326,8 @@ redirect_to_update_if_installed() {
 	fi
 
 	chmod +x "${tmp_update}"
-	# Pass REPO_BRANCH so update.sh installs the same release or branch as this installer.
-	HOMEIO_REPO_BRANCH="${REPO_BRANCH}" exec bash "${tmp_update}"
+	# Pass REPO_URL/REPO_BRANCH so update.sh stays on the same fork/branch as this installer.
+	HOMEIO_REPO_URL="${REPO_URL}" HOMEIO_REPO_BRANCH="${REPO_BRANCH}" exec bash "${tmp_update}"
 }
 
 main() {
