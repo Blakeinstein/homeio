@@ -605,7 +605,8 @@ EOF
 
 	systemctl daemon-reload
 	systemctl enable "${UPLOAD_SERVICE_NAME}.service"
-	systemctl start "${UPLOAD_SERVICE_NAME}.service"
+	# `restart`, not `start` -- see the same note in install_systemd_service().
+	systemctl restart "${UPLOAD_SERVICE_NAME}.service"
 
 	sleep 1
 
@@ -927,7 +928,11 @@ EOF
 
 	systemctl daemon-reload
 	systemctl enable "${SERVICE_NAME}.service"
-	systemctl start "${SERVICE_NAME}.service"
+	# `restart`, not `start`: a re-run of this installer (e.g. re-syncing an
+	# existing checkout) rebuilds the app on disk but `start` is a no-op on an
+	# already-active unit, leaving the old process serving the new build's
+	# static assets under a stale in-memory manifest.
+	systemctl restart "${SERVICE_NAME}.service"
 
 	# Wait a moment for service to start
 	sleep 2
@@ -1224,6 +1229,9 @@ EOF
 
 	systemctl daemon-reload
 	systemctl enable --now "${DBUS_SERVICE_NAME}.service"
+	# `enable --now` only starts it if not already active -- restart so a
+	# re-run of this installer actually picks up a changed dbus-helper build.
+	systemctl restart "${DBUS_SERVICE_NAME}.service"
 }
 
 print_summary() {
