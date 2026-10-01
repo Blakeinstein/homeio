@@ -38,11 +38,12 @@ const nextConfig = {
           { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          // The dashboard uses no camera, microphone or geolocation in the
-          // browser; deny them so a future XSS cannot either.
+          // The dashboard uses no camera or microphone; deny them so a future
+          // XSS cannot either. Geolocation stays allowed for Homeio's own
+          // pages, which use it for the weather in the top bar.
           {
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=()",
+            value: "camera=(), microphone=(), geolocation=(self)",
           },
           // Honoured only over HTTPS (the Cloudflare tunnel), ignored on a
           // plain-HTTP LAN address, so it is safe to send everywhere.
