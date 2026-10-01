@@ -5,31 +5,10 @@ import {
   logServerAction,
   withServerTiming,
 } from "@/lib/server/logging/logger";
-import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { getSystemUpdateStatus } from "@/lib/server/modules/system/update-service";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
-
-async function authenticateRequest(request: NextRequest, requestId: string) {
-  const sessionToken = request.cookies.get(getAuthCookieName())?.value;
-  const session = await authenticateSession(sessionToken);
-
-  if (!session) {
-    logServerAction({
-      level: "warn",
-      layer: "api",
-      action: "system.updates.response",
-      status: "error",
-      requestId,
-      message: "Unauthorized system updates request",
-    });
-    return null;
-  }
-
-  return session;
-}
 
 export async function GET(request: NextRequest) {
   const apiSession = await requireApiSession(request);
@@ -44,10 +23,7 @@ export async function GET(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticateRequest(request, requestId);
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        const session = apiSession.session;
 
         const status = await getSystemUpdateStatus();
 

@@ -14,5 +14,10 @@ export async function register() {
       "@/lib/server/modules/telemetry/service"
     );
     startTelemetry();
+
+    const { startMetricsHistory } = await import(
+      "@/lib/server/modules/system/metrics-history"
+    );
+    startMetricsHistory();
   }
 }

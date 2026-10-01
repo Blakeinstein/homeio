@@ -1,9 +1,7 @@
 import "server-only";
 
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { serverEnv } from "@/lib/server/env";
@@ -40,37 +38,46 @@ function getLogFilePath(): string {
     : path.resolve(process.cwd(), filePath);
 }
 
-async function readTailLines(
-  filePath: string,
-  maxLines: number,
-): Promise<string[]> {
+// The Logs window shows the last lines of a file that only grows (tens of MB
+// after a few weeks). Read it backwards from the end, a chunk at a time, so
+// the cost follows the lines shown instead of the size of the file.
+const TAIL_CHUNK_BYTES = 64 * 1024;
+const NEWLINE = 0x0a;
+
+/** The last `maxLines` non-empty lines of a file, or [] when it does not exist. */
+export async function readTailLines(filePath: string, maxLines: number): Promise<string[]> {
+  let file: FileHandle;
   try {
-    await stat(filePath);
+    file = await open(filePath, "r");
   } catch {
     return [];
   }
 
-  return new Promise((resolve, reject) => {
-    const lines: string[] = [];
+  try {
+    const { size } = await file.stat();
+    const chunks: Buffer[] = [];
+    let position = size;
+    let newlines = 0;
 
-    const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf8" }),
-      crlfDelay: Infinity,
-    });
-
-    rl.on("line", (line) => {
-      if (line.trim()) {
-        lines.push(line);
+    // One newline more than the lines wanted: the window's first line may be cut.
+    while (position > 0 && newlines <= maxLines) {
+      const length = Math.min(TAIL_CHUNK_BYTES, position);
+      position -= length;
+      const chunk = Buffer.alloc(length);
+      await file.read(chunk, 0, length, position);
+      chunks.unshift(chunk);
+      for (let at = chunk.indexOf(NEWLINE); at !== -1; at = chunk.indexOf(NEWLINE, at + 1)) {
+        newlines += 1;
       }
-    });
+    }
 
-    rl.on("close", () => {
-      // Return last maxLines
-      resolve(lines.slice(-maxLines));
-    });
-
-    rl.on("error", reject);
-  });
+    // Decode once, after joining: a character split across two chunks stays whole.
+    const lines = Buffer.concat(chunks).toString("utf8").split("\n");
+    if (position > 0) lines.shift();
+    return lines.filter((line) => line.trim()).slice(-maxLines);
+  } finally {
+    await file.close();
+  }
 }
 
 function parseHomeioLine(raw: string): RawLogEntry {

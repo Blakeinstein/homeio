@@ -1,9 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type * as NetworkActivity from "@/lib/server/modules/system/network-activity";
+
+const { countersMock } = vi.hoisted(() => ({ countersMock: vi.fn() }));
 
 vi.mock("node:os", () => ({
   default: {
     loadavg: () => [0.6, 0.5, 0.4],
-    cpus: () => [{}, {}, {}],
+    cpus: () => [0, 1, 2].map(() => ({ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } })),
+    networkInterfaces: () => ({
+      wlan0: [
+        { address: "192.168.1.22", family: "IPv4", internal: false },
+        { address: "fe80::1234", family: "IPv6", internal: false },
+      ],
+    }),
     totalmem: () => 1024,
     freemem: () => 256,
     hostname: () => "pi",
@@ -14,11 +23,18 @@ vi.mock("node:os", () => ({
   },
 }));
 
+vi.mock("@/lib/server/modules/system/network-activity", async (importOriginal) => ({
+  ...(await importOriginal<typeof NetworkActivity>()),
+  readDefaultRouteInterface: vi.fn(async () => "wlan0"),
+  readInterfaceCounters: countersMock,
+}));
+
 vi.mock("systeminformation", () => ({
   default: {
-    currentLoad: vi.fn(async () => ({
-      currentLoad: 33.3,
-    })),
+    // Must stay unused by the snapshot: each call spawns cat/grep/nmcli/ip.
+    currentLoad: vi.fn(),
+    networkInterfaces: vi.fn(),
+    networkStats: vi.fn(),
     cpuTemperature: vi.fn(async () => ({
       main: 49.2,
       cores: [48.5, 51.1],
@@ -53,29 +69,6 @@ vi.mock("systeminformation", () => ({
         rsnFlags: [],
       },
     ]),
-    networkInterfaces: vi.fn(async () => [
-      {
-        iface: "wlan0",
-        default: true,
-        ip4: "192.168.1.22",
-        ip6: "fe80::1234",
-      },
-    ]),
-    networkStats: vi.fn(async () => [
-      {
-        iface: "wlan0",
-        operstate: "up",
-        rx_bytes: 1000,
-        rx_dropped: 0,
-        rx_errors: 0,
-        tx_bytes: 1000,
-        tx_dropped: 0,
-        tx_errors: 0,
-        rx_sec: 3_100_000,
-        tx_sec: 1_100_000,
-        ms: 1000,
-      },
-    ]),
     fsSize: vi.fn(async () => [
       {
         fs: "/dev/sda1",
@@ -99,7 +92,17 @@ vi.mock("systeminformation", () => ({
 import { getSystemMetricsSnapshot } from "@/lib/server/modules/system/service";
 
 describe("system service", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("returns a snapshot with expected shape", async () => {
+    // Network throughput is a rate between two snapshots taken 2s apart.
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    countersMock.mockResolvedValueOnce({ rxBytes: 0, txBytes: 0 });
+    await getSystemMetricsSnapshot({ bypassCache: true });
+    now.mockReturnValue(12_000);
+    countersMock.mockResolvedValueOnce({ rxBytes: 6_200_000, txBytes: 2_200_000 });
     const snapshot = await getSystemMetricsSnapshot({ bypassCache: true });
 
     expect(snapshot.hostname).toBe("pi");
@@ -115,8 +118,22 @@ describe("system service", () => {
     expect(snapshot.battery.designToMaxCapacityPercent).toBe(90);
     expect(snapshot.wifi.connected).toBe(true);
     expect(snapshot.wifi.ssid).toBe("HomeNet");
+    expect(snapshot.wifi.iface).toBe("wlan0");
+    expect(snapshot.wifi.ipv4).toBe("192.168.1.22");
+    expect(snapshot.wifi.ipv6).toBe("fe80::1234");
     expect(snapshot.wifi.downloadMbps).toBe(24.8);
     expect(snapshot.wifi.uploadMbps).toBe(8.8);
+  });
+
+  it("reads network and CPU load from the kernel, without spawning commands", async () => {
+    const si = (await import("systeminformation")).default;
+    countersMock.mockResolvedValue({ rxBytes: 0, txBytes: 0 });
+
+    await getSystemMetricsSnapshot({ bypassCache: true });
+
+    expect(si.currentLoad).not.toHaveBeenCalled();
+    expect(si.networkInterfaces).not.toHaveBeenCalled();
+    expect(si.networkStats).not.toHaveBeenCalled();
   });
 
   it("serves cached snapshot unless bypassCache is set", async () => {

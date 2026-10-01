@@ -17,7 +17,13 @@ PUBLIC_PORT="${HOMEIO_PUBLIC_PORT:-80}"
 NGINX_SITE_NAME="${HOMEIO_NGINX_SITE_NAME:-home-server}"
 REPO_URL="${HOMEIO_REPO_URL:-https://github.com/doctor-io/homeio.git}"
 REPO_BRANCH="${HOMEIO_REPO_BRANCH:-main}"
-HOMEIO_RELEASE_TAG="${HOMEIO_RELEASE_TAG:-}"
+
+# The tarball install path is gone; a pinned version is now a git tag.
+if [[ -n "${HOMEIO_RELEASE_TAG:-}" || -n "${HOMEIO_RELEASE_TARBALL_URL:-}" ]]; then
+	echo "[!] HOMEIO_RELEASE_TAG and HOMEIO_RELEASE_TARBALL_URL are no longer supported." >&2
+	echo "[!] Homeio installs with git. To pin a version, set HOMEIO_REPO_BRANCH to its tag, for example HOMEIO_REPO_BRANCH=v1.10.0." >&2
+	exit 1
+fi
 
 NODE_VERSION="${NODE_VERSION:-22.14.0}"
 GO_VERSION="${GO_VERSION:-1.23.4}"
@@ -52,6 +58,35 @@ run_step() {
 
 command_exists() {
 	command -v "$1" >/dev/null 2>&1
+}
+
+# The tag of the release GitHub marks as Latest, or nothing when it cannot be
+# read (offline, rate-limited, no release yet). Never fails.
+latest_release_tag() {
+	local repo_path="${REPO_URL#https://github.com/}"
+	repo_path="${repo_path%.git}"
+	local json tag
+	json="$(curl -fsSL --max-time 20 -H "Accept: application/vnd.github+json" \
+		"https://api.github.com/repos/${repo_path}/releases/latest" 2>/dev/null)" || return 0
+	tag="$(printf '%s\n' "${json}" | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"
+	if [[ "${tag}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+		printf '%s\n' "${tag}"
+	fi
+}
+
+# Without HOMEIO_REPO_BRANCH, install the latest published release rather than
+# whatever main holds between a merge and its release. git fetches a tag the
+# same way as a branch.
+resolve_repo_ref() {
+	[[ -n "${HOMEIO_REPO_BRANCH:-}" ]] && return 0
+	local tag
+	tag="$(latest_release_tag)"
+	if [[ -n "${tag}" ]]; then
+		REPO_BRANCH="${tag}"
+		print_status "Latest release: ${tag}"
+	else
+		print_warn "Could not read the latest release from GitHub; using the ${REPO_BRANCH} branch."
+	fi
 }
 
 require_root() {
@@ -241,6 +276,7 @@ install_extras() {
 			ffmpeg \
 			ufw \
 			fail2ban \
+			python3-systemd \
 			samba \
 			wsdd2 \
 			cifs-utils \
@@ -278,6 +314,7 @@ install_extras() {
 			ffmpeg \
 			ufw \
 			fail2ban \
+			python3-systemd \
 			samba \
 			wsdd2 \
 			cifs-utils \
@@ -300,8 +337,23 @@ install_extras() {
 	# Let HomeIO manage these when needed
 	systemctl disable smbd wsdd2 >/dev/null 2>&1 || true
 	systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
+	configure_fail2ban_backend
 	systemctl enable --now fail2ban >/dev/null 2>&1 || true
 	systemctl restart fail2ban >/dev/null 2>&1 || true
+}
+
+# Debian 12+ no longer ships rsyslog, so /var/log/auth.log does not exist and
+# fail2ban's default backend aborts on the sshd jail. Read the journal instead.
+# Kept apart from jail.d/homeio.local, which the app rewrites from Settings.
+configure_fail2ban_backend() {
+	mkdir -p /etc/fail2ban/jail.d
+	cat > /etc/fail2ban/jail.d/00-homeio-backend.local <<'CONF'
+[DEFAULT]
+backend = systemd
+
+[sshd]
+backend = systemd
+CONF
 }
 
 ensure_security_dependencies() {
@@ -310,6 +362,7 @@ ensure_security_dependencies() {
 	local packages=()
 	command_exists ufw || packages+=("ufw")
 	command_exists fail2ban-client || packages+=("fail2ban")
+	dpkg-query -W -f='${Status}' python3-systemd 2>/dev/null | grep -q "install ok installed" || packages+=("python3-systemd")
 
 	if (( ${#packages[@]} > 0 )); then
 		if [[ "${HOMEIO_VERBOSE}" == "true" ]]; then
@@ -321,6 +374,7 @@ ensure_security_dependencies() {
 		fi
 	fi
 
+	configure_fail2ban_backend
 	systemctl enable --now fail2ban >/dev/null 2>&1 || true
 	systemctl restart fail2ban >/dev/null 2>&1 || true
 }
@@ -531,8 +585,11 @@ After=network.target
 Type=simple
 User=root
 EnvironmentFile=${ENV_FILE}
-Environment=UPLOAD_SERVER_ADDR=/run/home-server/upload.sock
-RuntimeDirectory=home-server
+Environment=UPLOAD_SERVER_ADDR=/run/home-server-upload/upload.sock
+# A directory of its own: the DBus helper owns /run/home-server (mode 0770), and
+# sharing it meant whichever service started last set its mode, and stopping
+# either one deleted the other's socket, leaving nginx unable to reach uploads.
+RuntimeDirectory=home-server-upload
 RuntimeDirectoryMode=0755
 ExecStart=${INSTALL_DIR}/bin/upload-server
 Restart=always
@@ -609,60 +666,8 @@ ensure_directories() {
 	mkdir -p "${INSTALL_DIR}/logs"
 }
 
-deploy_from_release_tarball() {
-	local url="${1}"
-	local tmp_dir extract_dir source_dir
-	tmp_dir="$(mktemp -d)"
-	extract_dir="${tmp_dir}/extract"
-	mkdir -p "${extract_dir}"
-
-	print_status "Downloading release from ${url}..."
-	curl -fsSL "${url}" -o "${tmp_dir}/release.tar.gz"
-	tar -xzf "${tmp_dir}/release.tar.gz" -C "${extract_dir}"
-
-	if [[ -f "${extract_dir}/package.json" ]]; then
-		source_dir="${extract_dir}"
-	else
-		source_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-	fi
-
-	[[ -n "${source_dir:-}" && -f "${source_dir}/package.json" ]] || {
-		print_error "Could not locate app root in tarball."; exit 1
-	}
-
-	mkdir -p "${INSTALL_DIR}"
-	rsync -a \
-		--exclude ".git" \
-		--exclude "node_modules" \
-		--exclude ".next" \
-		"${source_dir}/" "${INSTALL_DIR}/"
-
-	rm -rf "${tmp_dir}"
-	print_status "Release deployed."
-}
-
 clone_or_update_repo() {
 	print_status "Syncing repository..."
-
-	if [[ -n "${HOMEIO_RELEASE_TAG}" ]]; then
-		local tarball_url
-		if [[ "${HOMEIO_RELEASE_TAG}" == "latest" ]]; then
-			print_status "Fetching latest release URL..."
-			tarball_url="$(curl -fsSL \
-				"https://api.github.com/repos/doctor-io/homeio/releases/latest" \
-				| jq -r '.tarball_url')"
-			[[ -n "${tarball_url}" ]] || { print_error "Could not fetch latest release URL."; exit 1; }
-		else
-			tarball_url="https://github.com/doctor-io/homeio/archive/refs/tags/${HOMEIO_RELEASE_TAG}.tar.gz"
-		fi
-		if [[ -d "${INSTALL_DIR}" ]]; then
-			cd /tmp || cd /
-			print_status "Removing existing installation..."
-			rm -rf "${INSTALL_DIR}"
-		fi
-		deploy_from_release_tarball "${tarball_url}"
-		return
-	fi
 
 	# Remove existing installation if present
 	if [[ -d "${INSTALL_DIR}" ]]; then
@@ -671,7 +676,8 @@ clone_or_update_repo() {
 		rm -rf "${INSTALL_DIR}"
 	fi
 
-	print_status "Cloning repository (branch: ${REPO_BRANCH})..."
+	resolve_repo_ref
+	print_status "Cloning repository (${REPO_BRANCH})..."
 	git clone --depth=1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${INSTALL_DIR}" --quiet
 }
 
@@ -935,6 +941,45 @@ EOF
 	fi
 }
 
+# Debian ships nginx with 768 connections per worker. Each open Homeio desktop
+# holds three live streams, and each stream uses two connections (visitor side
+# and Homeio side), so the default caps a server at a few hundred desktops.
+# Only these two limits are raised; the rest of nginx.conf is left alone.
+tune_nginx_limits() {
+	local main_conf="/etc/nginx/nginx.conf"
+	local worker_connections=4096
+	local worker_rlimit_nofile=16384
+	[[ -f "${main_conf}" ]] || return 0
+
+	local current raise_connections=false add_rlimit=false
+	current="$(sed -nE 's/^\s*worker_connections\s+([0-9]+);.*/\1/p' "${main_conf}" | head -n1)"
+	if [[ -n "${current}" ]] && (( current < worker_connections )); then
+		raise_connections=true
+	fi
+	if ! grep -qE '^\s*worker_rlimit_nofile\s' "${main_conf}"; then
+		add_rlimit=true
+	fi
+	if [[ "${raise_connections}" == false && "${add_rlimit}" == false ]]; then
+		return 0
+	fi
+
+	cp "${main_conf}" "${main_conf}.homeio-bak"
+	if [[ "${raise_connections}" == true ]]; then
+		sed -i -E "s/^(\s*worker_connections\s+)[0-9]+;/\1${worker_connections};/" "${main_conf}"
+	fi
+	if [[ "${add_rlimit}" == true ]]; then
+		sed -i -E "/^\s*worker_processes\s/a worker_rlimit_nofile ${worker_rlimit_nofile};" "${main_conf}"
+	fi
+
+	if ! nginx -t >/dev/null 2>&1; then
+		print_warn "nginx rejected the raised connection limits; keeping its previous settings."
+		mv "${main_conf}.homeio-bak" "${main_conf}"
+		return 0
+	fi
+	rm -f "${main_conf}.homeio-bak"
+	print_status "nginx now accepts ${worker_connections} connections per worker."
+}
+
 install_reverse_proxy() {
 	command_exists systemctl || { print_error "systemd is required but systemctl is not available."; exit 1; }
 	command_exists nginx || { print_error "nginx is required but was not found."; exit 1; }
@@ -1049,13 +1094,22 @@ EOF
 	cat >"${nginx_conf}" <<EOF
 upstream homeio_backend {
     server 127.0.0.1:${APP_PORT};
-    keepalive 32;
+    # Idle connections kept per nginx worker for reuse. With too few, every
+    # request past the pool opened a fresh connection to Homeio and, at a few
+    # hundred desktops, Homeio's accept queue overflowed into 502s.
+    keepalive 128;
+    # Homeio keeps idle connections open longer than this, so nginx is always
+    # the side that closes them (see lib/server/http/keep-alive.ts).
+    keepalive_timeout 60s;
 }
 
 server {
     listen ${PUBLIC_PORT};
     listen [::]:${PUBLIC_PORT};
     server_name _;
+
+    # Do not advertise the nginx version in responses or error pages.
+    server_tokens off;
 
     client_max_body_size 10G;
     client_body_timeout 3600s;
@@ -1071,8 +1125,15 @@ server {
 
     # Route file uploads directly to the Go upload server, bypassing Next.js.
     # The Go binary streams multipart data straight to disk with minimal overhead.
+    # Next.js still decides who may upload: nginx asks it first, so the session
+    # is checked against the database and demo mode blocks uploads like every
+    # other write (app/api/v1/files/upload/authorize).
     location = /api/v1/files/upload {
-        proxy_pass http://unix:/run/home-server/upload.sock:/upload;
+        auth_request /__homeio_upload_authorize;
+        error_page 401 = @homeio_upload_unauthorized;
+        error_page 403 = @homeio_upload_forbidden;
+
+        proxy_pass http://unix:/run/home-server-upload/upload.sock:/upload;
         proxy_http_version 1.1;
         proxy_request_buffering off;
         proxy_buffering off;
@@ -1081,6 +1142,27 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
+    location = /__homeio_upload_authorize {
+        internal;
+        proxy_pass http://homeio_backend/api/v1/files/upload/authorize;
+        proxy_http_version 1.1;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Content-Type "";
+        proxy_set_header Connection "";
+        proxy_set_header Host \$host;
+    }
+
+    location @homeio_upload_unauthorized {
+        default_type application/json;
+        return 401 '{"error":"Unauthorized"}';
+    }
+
+    location @homeio_upload_forbidden {
+        default_type application/json;
+        return 403 '{"error":"This action is not available in demo mode."}';
     }
 
     location / {
@@ -1104,6 +1186,7 @@ EOF
 	ln -sf "${nginx_conf}" "${nginx_enabled}"
 	rm -f /etc/nginx/sites-enabled/default >/dev/null 2>&1 || true
 
+	tune_nginx_limits
 	nginx -t
 	systemctl enable --now nginx
 	systemctl restart nginx
@@ -1225,6 +1308,7 @@ redirect_to_update_if_installed() {
 	print_warn "To force a full reinstall, set HOMEIO_FORCE_REINSTALL=true."
 	echo ""
 
+	resolve_repo_ref
 	local update_url="https://raw.githubusercontent.com/doctor-io/homeio/${REPO_BRANCH}/scripts/update.sh"
 	local tmp_update
 	tmp_update="$(mktemp /tmp/homeio-update-XXXXXX.sh)"
@@ -1237,7 +1321,7 @@ redirect_to_update_if_installed() {
 	fi
 
 	chmod +x "${tmp_update}"
-	# Pass REPO_BRANCH so update.sh stays on the same branch as this installer.
+	# Pass REPO_BRANCH so update.sh installs the same release or branch as this installer.
 	HOMEIO_REPO_BRANCH="${REPO_BRANCH}" exec bash "${tmp_update}"
 }
 

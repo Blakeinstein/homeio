@@ -6,6 +6,7 @@ import {
   withServerTiming,
 } from "@/lib/server/logging/logger";
 import { scheduleSystemUpdate } from "@/lib/server/modules/system/update-service";
+import { emitPowerAction } from "@/lib/server/modules/system/power-action-events";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest) {
       },
       async () => {
         const accepted = await scheduleSystemUpdate();
+        emitPowerAction("update");
 
         logServerAction({
           layer: "api",

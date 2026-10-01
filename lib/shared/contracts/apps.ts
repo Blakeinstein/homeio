@@ -1,3 +1,5 @@
+import type { AppConditionSummary } from "@/lib/shared/app-condition";
+
 export type StoreOperationAction =
   | "install"
   | "update"
@@ -39,6 +41,8 @@ export type InstalledApp = {
   containerName?: string | null;
   logoUrl?: string | null;
   status: "running" | "partial" | "paused" | "stopped" | "unknown";
+  /** Finer than status: a clean stop vs a crash, a restart loop, a failing health check. */
+  condition?: AppConditionSummary | null;
   activeOperation?: InstalledAppActiveOperation | null;
   updatedAt: string;
 };

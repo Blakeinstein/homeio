@@ -858,6 +858,11 @@ function CloudflareTunnelConfig() {
           ? (status.state ?? "Stopped")
           : "Not activated";
 
+  const others = enabled ? (status?.otherConnectors ?? []).filter((connector) => connector.running) : [];
+  const sameTunnel = others.filter((connector) => connector.sameTunnel === true);
+  const maybeSameTunnel = others.filter((connector) => connector.sameTunnel === null);
+  const listNames = (connectors: typeof others) => connectors.map((connector) => connector.name).join(", ");
+
   const activationError =
     (configMutation.error as Error | null)?.message ??
     (activateMutation.error as Error | null)?.message ??
@@ -872,6 +877,18 @@ function CloudflareTunnelConfig() {
       )}
       {enabled && !isActive && status?.error && (
         <InfoBanner text={status.error} variant="warning" />
+      )}
+      {sameTunnel.length > 0 && (
+        <InfoBanner
+          text={`${listNames(sameTunnel)} also runs a connector for this tunnel. Cloudflare splits traffic between connectors, so requests that land on one that cannot reach your apps fail. Keep one: stop ${sameTunnel.length > 1 ? "those containers" : "that container"} or Homeio's connector.`}
+          variant="warning"
+        />
+      )}
+      {maybeSameTunnel.length > 0 && (
+        <InfoBanner
+          text={`${listNames(maybeSameTunnel)} also runs cloudflared. If it serves this tunnel, stop one of the two connectors so traffic does not split between them.`}
+          variant="info"
+        />
       )}
       {savedOk && !activationError && (
         <InfoBanner text="Cloudflare Tunnel updated successfully." variant="info" />
@@ -970,6 +987,9 @@ function CloudflareTunnelConfig() {
             <div className="flex items-center justify-between gap-3 border-t border-glass-border/60 pt-3">
               <div className="text-[11px] text-muted-foreground/70">
                 Connector: <span className="text-foreground">{connectorLabel}</span>
+                {status?.installed ? (
+                  <span className="ml-1.5 font-mono text-muted-foreground/60">{status.containerName}</span>
+                ) : null}
               </div>
               <div className="flex items-center gap-2">
                 {isActive && (

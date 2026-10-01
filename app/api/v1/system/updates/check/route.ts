@@ -5,31 +5,10 @@ import {
   logServerAction,
   withServerTiming,
 } from "@/lib/server/logging/logger";
-import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { getSystemUpdateStatus } from "@/lib/server/modules/system/update-service";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
-
-async function authenticateRequest(request: NextRequest, requestId: string) {
-  const sessionToken = request.cookies.get(getAuthCookieName())?.value;
-  const session = await authenticateSession(sessionToken);
-
-  if (!session) {
-    logServerAction({
-      level: "warn",
-      layer: "api",
-      action: "system.updates.check.response",
-      status: "error",
-      requestId,
-      message: "Unauthorized Homeio update check request",
-    });
-    return null;
-  }
-
-  return session;
-}
 
 export async function POST(request: NextRequest) {
   const apiSession = await requireApiSession(request);
@@ -44,12 +23,9 @@ export async function POST(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticateRequest(request, requestId);
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        const session = apiSession.session;
 
-        const status = await getSystemUpdateStatus();
+        const status = await getSystemUpdateStatus({ refresh: true });
 
         logServerAction({
           layer: "api",

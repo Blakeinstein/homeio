@@ -27,7 +27,7 @@ var (
 func main() {
 	filesRoot = getEnv("FILES_ROOT", "/DATA")
 	sessionSecret = []byte(mustGetEnv("AUTH_SESSION_SECRET"))
-	addr := getEnv("UPLOAD_SERVER_ADDR", "/run/home-server/upload.sock")
+	addr := getEnv("UPLOAD_SERVER_ADDR", "/run/home-server-upload/upload.sock")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /upload", handleUpload)

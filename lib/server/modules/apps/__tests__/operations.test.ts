@@ -135,6 +135,7 @@ describe("store operations", () => {
       lifecycleStatus: "running",
       containerNames: ["app"],
       primaryContainerName: "app",
+      condition: { condition: "running", exitCode: null },
     });
   });
 
@@ -382,6 +383,7 @@ describe("store operations", () => {
       lifecycleStatus: "stopped",
       containerNames: ["grafana"],
       primaryContainerName: "grafana",
+      condition: { condition: "stopped", exitCode: null },
     });
 
     let failed = false;
@@ -459,6 +461,7 @@ describe("store operations", () => {
       lifecycleStatus: "unknown",
       containerNames: [],
       primaryContainerName: null,
+      condition: { condition: "unknown", exitCode: null },
     });
 
     let failed = false;
@@ -1245,6 +1248,7 @@ describe("store operations", () => {
     vi.mocked(getComposeRuntimeInfo).mockResolvedValue({
       status: "running",
       primaryContainerName: "example",
+      condition: { condition: "running", exitCode: null },
     });
 
     const { operationId } = await startStoreOperation({
@@ -1460,6 +1464,7 @@ describe("store operations", () => {
       lifecycleStatus: "restarting",
       containerNames: ["example-app-1"],
       primaryContainerName: "example-app-1",
+      condition: { condition: "stopped", exitCode: null },
     });
     vi.mocked(createStoreOperation).mockResolvedValue(undefined);
     vi.mocked(updateStoreOperation).mockResolvedValue(undefined);
@@ -1509,6 +1514,7 @@ describe("store operations", () => {
       lifecycleStatus: "running",
       containerNames: ["purge"],
       primaryContainerName: "purge",
+      condition: { condition: "running", exitCode: null },
     });
     vi.mocked(runComposeRestart).mockResolvedValue(undefined);
 

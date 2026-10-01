@@ -116,12 +116,6 @@ export function AppGridContent({
           {apps.map((app) => {
             const visualState = getAppVisualState(app);
             const BadgeIcon = visualState.badgeIcon;
-            const animatedContainerClass = animationsEnabled
-              ? visualState.containerClass
-              : "";
-            const animatedDotInnerClass = animationsEnabled
-              ? visualState.dotInnerClass
-              : "";
 
             return (
               <button
@@ -143,7 +137,7 @@ export function AppGridContent({
                   <div
                     className={`${iconContainerClass} relative flex items-center justify-center overflow-hidden border grain-overlay ${visualState.ringClass} ${!app.logoUrl ? `${app.bgColor} ${app.color}` : "bg-white/90"} shadow-lg shadow-black/20 ${
                       animationsEnabled
-                        ? `transition-transform duration-200 group-hover:scale-110 ${animatedContainerClass}`
+                        ? `transition-transform duration-200 group-hover:scale-110`
                         : ""
                     }`}
                     style={{ transform: "translateZ(0)" }}
@@ -197,22 +191,12 @@ export function AppGridContent({
                   </div>
                   {BadgeIcon ? (
                     <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                      <span
-                        className={`flex size-4 items-center justify-center rounded-[var(--radius)] border border-background ${visualState.badgeClass}`}
-                      >
-                        <BadgeIcon
-                          className={`size-2.5 ${
-                            animationsEnabled ? visualState.badgeIconClass : ""
-                          }`}
-                        />
-                      </span>
+                      <BadgeIcon
+                        className={`size-7 drop-shadow-[0_1px_3px_rgba(0,0,0,0.7)] ${visualState.badgeClass} ${
+                          animationsEnabled ? visualState.badgeIconClass : ""
+                        }`}
+                      />
                     </span>
-                  ) : null}
-
-                  {animatedDotInnerClass ? (
-                    <span
-                      className={`pointer-events-none absolute -bottom-0.5 -right-0.5 size-3 rounded-[var(--radius)] ${animatedDotInnerClass}`}
-                    />
                   ) : null}
                   {app.updateAvailable && app.status === "running" ? (
                     <span

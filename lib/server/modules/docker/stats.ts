@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { serverEnv } from "@/lib/server/env";
 import { LruCache } from "@/lib/server/cache/lru";
+import { memoizeAsync } from "@/lib/server/cache/memoize-async";
 import { logServerAction } from "@/lib/server/logging/logger";
 import type { DockerInfo } from "@/lib/shared/contracts/docker";
 
@@ -329,17 +330,26 @@ type DockerDaemonInfo = {
  * Fetch Docker engine metadata from the /info endpoint.
  * Returns null when the daemon socket is unreachable.
  */
+// `docker compose version` spawns the docker CLI and its compose plugin (three
+// processes) and only changes when Docker is upgraded: ask every 10 minutes.
+const COMPOSE_VERSION_TTL_MS = 10 * 60_000;
+
+const readComposeVersion = memoizeAsync(async () => {
+  try {
+    const { stdout } = await execFileAsync("docker", ["compose", "version", "--short"]);
+    return stdout.trim();
+  } catch {
+    // compose plugin not installed or unavailable
+    return "--";
+  }
+}, COMPOSE_VERSION_TTL_MS);
+
 export async function getDockerInfo(): Promise<DockerInfo | null> {
   try {
-    const info = await dockerRequest<DockerDaemonInfo>("/info");
-
-    let composeVersion = "--";
-    try {
-      const { stdout } = await execFileAsync("docker", ["compose", "version", "--short"]);
-      composeVersion = stdout.trim();
-    } catch {
-      // compose plugin not installed or unavailable
-    }
+    const [info, composeVersion] = await Promise.all([
+      dockerRequest<DockerDaemonInfo>("/info"),
+      readComposeVersion(),
+    ]);
 
     return {
       engineVersion: info.ServerVersion,

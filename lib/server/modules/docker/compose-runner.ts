@@ -5,6 +5,11 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { serverEnv } from "@/lib/server/env";
+import {
+  summarizeContainers,
+  toContainerHealth,
+  type AppConditionSummary,
+} from "@/lib/shared/app-condition";
 import { logServerAction, withServerTiming } from "@/lib/server/logging/logger";
 import {
   applyBindMountOwnershipOverrides,
@@ -1225,6 +1230,8 @@ export async function getComposeStatus(input: {
 type ComposePsEntry = {
   State?: string;
   Name?: string;
+  ExitCode?: number;
+  Health?: string;
 };
 
 function parseComposePsOutput(stdout: string) {
@@ -1265,23 +1272,30 @@ export async function getComposeRuntimeInfo(input: {
   lifecycleStatus: "running" | "paused" | "restarting" | "stopped" | "unknown";
   containerNames: string[];
   primaryContainerName: string | null;
+  condition: AppConditionSummary;
 }> {
   try {
+    // -a includes stopped containers, so a crash shows up with its exit code
+    // instead of looking like a clean stop.
     const stdout = await runComposeCommand({
       ...input,
-      args: ["ps", "--format", "json"],
+      args: ["ps", "-a", "--format", "json"],
     });
 
-    if (!stdout.trim()) {
-      return {
-        status: "stopped",
-        lifecycleStatus: "stopped",
-        containerNames: [],
-        primaryContainerName: null,
-      };
-    }
+    const allContainers = stdout.trim() ? parseComposePsOutput(stdout) : [];
+    const condition = summarizeContainers(
+      allContainers.map((entry) => ({
+        state: entry.State ?? "",
+        exitCode: typeof entry.ExitCode === "number" ? entry.ExitCode : null,
+        health: toContainerHealth(entry.Health),
+      })),
+    );
 
-    const containers = parseComposePsOutput(stdout);
+    // status and lifecycleStatus keep their meaning from before -a: they are
+    // computed from the containers that are up, not the stopped ones.
+    const containers = allContainers.filter(
+      (entry) => !["exited", "created", "dead"].includes((entry.State ?? "").trim().toLowerCase()),
+    );
 
     if (containers.length === 0) {
       return {
@@ -1289,6 +1303,7 @@ export async function getComposeRuntimeInfo(input: {
         lifecycleStatus: "stopped",
         containerNames: [],
         primaryContainerName: null,
+        condition,
       };
     }
 
@@ -1324,6 +1339,7 @@ export async function getComposeRuntimeInfo(input: {
       lifecycleStatus,
       containerNames,
       primaryContainerName,
+      condition,
     };
   } catch {
     return {
@@ -1331,6 +1347,7 @@ export async function getComposeRuntimeInfo(input: {
       lifecycleStatus: "unknown",
       containerNames: [],
       primaryContainerName: null,
+      condition: { condition: "unknown", exitCode: null },
     };
   }
 }

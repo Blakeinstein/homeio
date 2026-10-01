@@ -31,8 +31,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # docker-cli / docker-cli-compose: the app shells out to `docker compose` to
 # install and run every app. su-exec: the entrypoint starts as root to line the
-# app user up with the Docker socket group, then drops back down.
-RUN apk add --no-cache git unzip docker-cli docker-cli-compose su-exec && \
+# app user up with the Docker socket group, then drops back down. lsblk: the
+# Monitor's Disks tab lists the host's disks with it (read-only in Docker).
+RUN apk add --no-cache git unzip docker-cli docker-cli-compose su-exec lsblk && \
     addgroup --system --gid 1001 homeio && \
     adduser --system --uid 1001 homeio && \
     mkdir -p /DATA && \

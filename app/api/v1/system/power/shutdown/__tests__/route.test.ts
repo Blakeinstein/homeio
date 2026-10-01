@@ -1,27 +1,16 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
 
 vi.mock("@/lib/server/modules/system/power-service", () => ({
   scheduleSystemShutdown: vi.fn(),
 }));
 
 import { POST } from "@/app/api/v1/system/power/shutdown/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
+import { requireApiSession } from "@/lib/server/modules/auth/api";
 import { scheduleSystemShutdown } from "@/lib/server/modules/system/power-service";
 
 describe("POST /api/v1/system/power/shutdown", () => {
   it("returns 202 and schedules shutdown for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(scheduleSystemShutdown).mockResolvedValueOnce(undefined);
 
     const request = new NextRequest("http://localhost/api/v1/system/power/shutdown", {
@@ -42,7 +31,10 @@ describe("POST /api/v1/system/power/shutdown", () => {
   });
 
   it("returns 401 when the session is missing or invalid", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce(null);
+    vi.mocked(requireApiSession).mockResolvedValueOnce({
+      session: null,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
 
     const request = new NextRequest("http://localhost/api/v1/system/power/shutdown", {
       method: "POST",
@@ -55,13 +47,6 @@ describe("POST /api/v1/system/power/shutdown", () => {
   });
 
   it("returns 500 when shutdown scheduling fails", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(scheduleSystemShutdown).mockRejectedValueOnce(new Error("spawn failed"));
 
     const request = new NextRequest("http://localhost/api/v1/system/power/shutdown", {

@@ -193,10 +193,9 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-Homeio is source-available under the [Business Source License 1.1](./LICENSE).
+Homeio is free and open source software, licensed under the [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0).
 
-- **Free to use in production** for yourself, your household or your organization: run it at home, at work, on as many servers as you like, and modify it.
-- **Not allowed without a commercial license:** offering Homeio to others as a hosted or managed service, or selling it, including preinstalled on hardware.
-- **Each version becomes open source** under the Apache License 2.0 four years after it is released.
+- **Use it anywhere**: at home, at work, on as many servers as you like, and change it however you want.
+- **Share what you change**: if you distribute a modified Homeio, or run a modified version as a service for other people, you must publish your changes under the AGPL-3.0 as well. Nobody can turn Homeio into a closed product.
 
-Versions up to and including 1.9.5 were released under the MIT License and stay under it. For a commercial license, email [tebib.ahmed0@gmail.com](mailto:tebib.ahmed0@gmail.com).
+License history: versions up to and including 1.9.5 are MIT, 1.9.6 and 1.9.7 are under the Business Source License 1.1, and 1.10.0 onward is AGPL-3.0. Each release stays under the license it shipped with.

@@ -1,27 +1,15 @@
 import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
-
 vi.mock("@/lib/server/modules/system/backup-service", () => ({
   scheduleSystemBackupRestore: vi.fn(),
 }));
 
 import { POST } from "@/app/api/v1/system/backups/[backupId]/restore/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { scheduleSystemBackupRestore } from "@/lib/server/modules/system/backup-service";
 
 describe("POST /api/v1/system/backups/[backupId]/restore", () => {
   it("returns 202 when restore scheduling succeeds", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(scheduleSystemBackupRestore).mockResolvedValueOnce({
       action: "restore",
       accepted: true,
@@ -43,13 +31,6 @@ describe("POST /api/v1/system/backups/[backupId]/restore", () => {
   });
 
   it("returns 404 for unknown backups", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "salt:hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(scheduleSystemBackupRestore).mockRejectedValueOnce(new Error("Backup not found"));
 
     const response = await POST(

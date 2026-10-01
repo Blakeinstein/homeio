@@ -640,6 +640,13 @@ export function DiskManager() {
         </button>
       </div>
 
+      {data?.readOnly ? (
+        <p className="shrink-0 border-b border-glass-border/60 px-4 py-2 text-[11px] text-muted-foreground">
+          Homeio runs in Docker, so disks are shown read-only: formatting, partitioning, mounting and
+          wiping need the script install on the host.
+        </p>
+      ) : null}
+
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
         {/* Disk list sidebar */}
@@ -647,7 +654,9 @@ export function DiskManager() {
           {isLoading ? (
             <p className="px-3 py-4 text-center text-xs text-muted-foreground/60">Detecting disks…</p>
           ) : disks.length === 0 ? (
-            <p className="px-3 py-4 text-center text-xs text-muted-foreground/60">No disks found</p>
+            <p className="px-3 py-4 text-center text-xs text-muted-foreground/60">
+              {data?.unavailableReason ?? "No disks found"}
+            </p>
           ) : (
             disks.map((disk) => (
               <DiskCard
@@ -662,7 +671,10 @@ export function DiskManager() {
 
         {/* Detail panel */}
         {active ? (
-          <DiskDetail key={active.name} disk={active} />
+          // disabled on a fieldset disables every button inside it.
+          <fieldset disabled={data?.readOnly} className="m-0 flex min-w-0 flex-1 border-0 p-0">
+            <DiskDetail key={active.name} disk={active} />
+          </fieldset>
         ) : (
           <div className="flex flex-1 items-center justify-center">
             <div className="flex flex-col items-center gap-2 text-center">

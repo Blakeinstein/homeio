@@ -1,5 +1,5 @@
 import type * as NodeFsPromises from "node:fs/promises";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 
 const { execFileMock, statMock } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
@@ -16,10 +16,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import {
+  buildLatestReleaseApiUrl,
   buildRemotePackageJsonApiUrl,
   buildRemotePackageJsonUrl,
   compareVersions,
   getSystemUpdateStatus,
+  resetUpdateStatusCacheForTests,
   scheduleSystemUpdate,
 } from "@/lib/server/modules/system/update-service";
 import packageJson from "@/package.json";
@@ -40,10 +42,39 @@ function bumpPatchVersion(version: string) {
   return parts.join(".");
 }
 
+function releaseResponse(tag: string) {
+  return { ok: true, status: 200, json: async () => ({ tag_name: tag }) } as Response;
+}
+
+function branchResponse(version: string) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      content: Buffer.from(JSON.stringify({ version }), "utf8").toString("base64"),
+      encoding: "base64",
+    }),
+  } as Response;
+}
+
+function succeedAllExecFileCalls() {
+  execFileMock.mockImplementation((_command: string, _args: string[], ...rest: unknown[]) => {
+    resolveExecFileCallback(rest)(null, "", "");
+  });
+}
+
 describe("update-service", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    resetUpdateStatusCacheForTests();
     execFileMock.mockReset();
+    // Release mode unless a test opts into following a branch.
+    vi.stubEnv("HOMEIO_REPO_BRANCH", "");
+    vi.stubEnv("HOMEIO_CONTAINER", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("compares semantic versions correctly", () => {
@@ -64,15 +95,17 @@ describe("update-service", () => {
     ).toBe("https://api.github.com/repos/doctor-io/homeio/contents/package.json?ref=main");
   });
 
-  it("reads the current version and reports update availability", async () => {
+  it("reports that the Docker image cannot update itself", async () => {
+    vi.stubEnv("HOMEIO_CONTAINER", "true");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(releaseResponse(`v${packageJson.version}`));
+
+    const status = await getSystemUpdateStatus();
+    expect(status.canSelfUpdate).toBe(false);
+  });
+
+  it("offers the latest published release, not whatever main holds", async () => {
     const nextVersion = bumpPatchVersion(packageJson.version);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        content: Buffer.from(JSON.stringify({ version: nextVersion }), "utf8").toString("base64"),
-        encoding: "base64",
-      }),
-    } as Response);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(releaseResponse(`v${nextVersion}`));
 
     const status = await getSystemUpdateStatus();
 
@@ -80,10 +113,10 @@ describe("update-service", () => {
     expect(status.latestVersion).toBe(nextVersion);
     expect(status.updateAvailable).toBe(true);
     expect(status.checkedAt).toBeTruthy();
+    expect(status.canSelfUpdate).toBe(true);
     const [requestUrl, requestInit] = fetchMock.mock.calls[0] ?? [];
-    expect(String(requestUrl)).toBe(
-      "https://api.github.com/repos/doctor-io/homeio/contents/package.json?ref=main",
-    );
+    expect(String(requestUrl)).toBe(buildLatestReleaseApiUrl());
+    expect(String(requestUrl)).toBe("https://api.github.com/repos/doctor-io/homeio/releases/latest");
     expect(requestInit).toMatchObject({
       cache: "no-store",
       headers: {
@@ -93,12 +126,100 @@ describe("update-service", () => {
     });
   });
 
-  it("schedules the updater through a transient systemd unit", async () => {
+  it("reports no update before the first release is published", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({ ok: false, status: 404 } as Response);
+
+    const status = await getSystemUpdateStatus();
+
+    expect(status.latestVersion).toBeNull();
+    expect(status.updateAvailable).toBe(false);
+  });
+
+  it("rejects a latest release whose tag is not a version", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(releaseResponse("main; rm -rf /"));
+
+    await expect(getSystemUpdateStatus()).rejects.toThrow("does not have a version tag");
+  });
+
+  it("follows HOMEIO_REPO_BRANCH when a server sets it", async () => {
+    vi.stubEnv("HOMEIO_REPO_BRANCH", "v2.0");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(branchResponse("2.0.13"));
+
+    const status = await getSystemUpdateStatus();
+
+    expect(status.latestVersion).toBe("2.0.13");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://api.github.com/repos/doctor-io/homeio/contents/package.json?ref=v2.0",
+    );
+  });
+
+  it("asks GitHub at most once an hour, however many desktops load", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(releaseResponse("v9.9.9"));
+
+    await Promise.all([getSystemUpdateStatus(), getSystemUpdateStatus(), getSystemUpdateStatus()]);
+    now.mockReturnValue(1_000_000 + 59 * 60_000);
+    await getSystemUpdateStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(1_000_000 + 60 * 60_000);
+    await getSystemUpdateStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("serves the last known version when GitHub rate-limits the check", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(releaseResponse("v9.9.9"))
+      .mockResolvedValueOnce({ ok: false, status: 403 } as Response);
+    const first = await getSystemUpdateStatus();
+
+    now.mockReturnValue(1_000_000 + 2 * 60 * 60_000);
+    const second = await getSystemUpdateStatus();
+
+    expect(second.latestVersion).toBe("9.9.9");
+    // The answer is as old as the last successful check, and says so.
+    expect(second.checkedAt).toBe(first.checkedAt);
+  });
+
+  it("asks GitHub and reports its failure when the user checks now", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(releaseResponse("v9.9.9"))
+      .mockResolvedValueOnce({ ok: false, status: 403 } as Response);
+    await getSystemUpdateStatus();
+
+    await expect(getSystemUpdateStatus({ refresh: true })).rejects.toThrow("(403)");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("still fails when GitHub cannot be reached and nothing is known yet", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({ ok: false, status: 403 } as Response);
+
+    await expect(getSystemUpdateStatus()).rejects.toThrow("(403)");
+  });
+
+  it("waits five minutes before asking a rate-limiting GitHub again", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ ok: false, status: 429 } as Response)
+      .mockResolvedValueOnce(releaseResponse("v9.9.9"));
+
+    await expect(getSystemUpdateStatus()).rejects.toThrow("(429)");
+    now.mockReturnValue(1_000_000 + 4 * 60_000);
+    await expect(getSystemUpdateStatus()).rejects.toThrow("(429)");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(1_000_000 + 5 * 60_000);
+    expect((await getSystemUpdateStatus()).latestVersion).toBe("9.9.9");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("schedules the updater through a transient systemd unit, pinned to the latest release", async () => {
     statMock.mockResolvedValueOnce({});
-    execFileMock.mockImplementation((command: string, args: string[], ...rest: unknown[]) => {
-      const callback = resolveExecFileCallback(rest);
-      callback(null, "", "");
-    });
+    succeedAllExecFileCalls();
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(releaseResponse("v9.9.9"));
 
     const result = await scheduleSystemUpdate();
 
@@ -116,12 +237,39 @@ describe("update-service", () => {
         "--property=KillMode=control-group",
         "--property=TimeoutStopSec=30s",
         "--property=SendSIGKILL=yes",
+        "--setenv=HOMEIO_REPO_BRANCH=v9.9.9",
+        "--setenv=HOMEIO_REPO_URL=https://github.com/doctor-io/homeio.git",
         "bash",
         "-lc",
         expect.stringContaining("scripts/update.sh"),
       ]),
       expect.any(Function),
     );
+  });
+
+  it("installs the configured branch when the server follows one", async () => {
+    vi.stubEnv("HOMEIO_REPO_BRANCH", "v2.0");
+    statMock.mockResolvedValueOnce({});
+    succeedAllExecFileCalls();
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await scheduleSystemUpdate();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(execFileMock).toHaveBeenCalledWith(
+      "systemd-run",
+      expect.arrayContaining(["--setenv=HOMEIO_REPO_BRANCH=v2.0"]),
+      expect.any(Function),
+    );
+  });
+
+  it("refuses to update when no release has been published", async () => {
+    statMock.mockResolvedValueOnce({});
+    succeedAllExecFileCalls();
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({ ok: false, status: 404 } as Response);
+
+    await expect(scheduleSystemUpdate()).rejects.toThrow("no published Homeio release");
+    expect(execFileMock).not.toHaveBeenCalledWith("systemd-run", expect.anything(), expect.anything());
   });
 
   it("rejects scheduling when the update script does not exist", async () => {

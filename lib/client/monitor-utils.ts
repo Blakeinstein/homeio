@@ -1,4 +1,28 @@
+import type { InstalledApp } from "@/lib/shared/contracts/apps";
 import type { ContainerStats } from "@/lib/shared/contracts/docker";
+
+/**
+ * The installed app a container belongs to: the app's own container, or one of
+ * its Compose stack's (<stack>-<service>-1 or <stack>_<service>_1). With
+ * several matching stacks the longest name wins, so nextcloud-aio-… goes to
+ * the nextcloud-aio stack rather than nextcloud.
+ */
+export function findAppForContainer(
+  containerName: string,
+  apps: Pick<InstalledApp, "id" | "stackName" | "containerName" | "logoUrl">[],
+) {
+  const name = containerName.replace(/^\//, "");
+  const own = apps.find((app) => app.containerName === name);
+  if (own) return own;
+
+  let best: (typeof apps)[number] | null = null;
+  for (const app of apps) {
+    const stack = app.stackName;
+    const matches = name === stack || name.startsWith(`${stack}-`) || name.startsWith(`${stack}_`);
+    if (matches && (!best || stack.length > best.stackName.length)) best = app;
+  }
+  return best;
+}
 
 /**
  * Calculate total stats from Docker containers

@@ -1,9 +1,14 @@
 import type { NextRequest } from "next/server";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { scheduleSystemUpdateMock, requireApiSessionMock } = vi.hoisted(() => ({
+const { scheduleSystemUpdateMock, requireApiSessionMock, emitPowerActionMock } = vi.hoisted(() => ({
   scheduleSystemUpdateMock: vi.fn(),
   requireApiSessionMock: vi.fn(),
+  emitPowerActionMock: vi.fn(),
+}));
+
+vi.mock("@/lib/server/modules/system/power-action-events", () => ({
+  emitPowerAction: emitPowerActionMock,
 }));
 
 vi.mock("@/lib/server/modules/system/update-service", () => ({
@@ -22,6 +27,7 @@ describe("POST /api/v1/system/updates/apply", () => {
     vi.restoreAllMocks();
     scheduleSystemUpdateMock.mockReset();
     requireApiSessionMock.mockReset();
+    emitPowerActionMock.mockReset();
   });
 
   it("returns 401 when unauthenticated", async () => {
@@ -57,6 +63,7 @@ describe("POST /api/v1/system/updates/apply", () => {
     expect(response.status).toBe(400);
     const json = await response.json();
     expect(json.error).toContain("Docker container");
+    expect(emitPowerActionMock).not.toHaveBeenCalled();
   });
 
   it("returns 202 when update is accepted", async () => {
@@ -74,5 +81,7 @@ describe("POST /api/v1/system/updates/apply", () => {
     expect(response.status).toBe(202);
     const json = await response.json();
     expect(json.data.accepted).toBe(true);
+    // Other open sessions switch to the update screen too.
+    expect(emitPowerActionMock).toHaveBeenCalledWith("update");
   });
 });

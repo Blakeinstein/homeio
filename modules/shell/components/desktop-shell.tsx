@@ -38,14 +38,17 @@ import { SettingsPanel } from "@/modules/settings/components/settings";
 import { CommandPalette } from "@/modules/shell/components/command-palette";
 import { useDesktopAppearance } from "@/modules/shell/hooks/useDesktopAppearance";
 import { useRebootRecovery } from "@/modules/shell/hooks/useRebootRecovery";
+import { useServerConnection } from "@/modules/shell/hooks/useServerConnection";
 import { Monitor } from "@/modules/system/components/monitor";
 import { DiskManager } from "@/modules/system/components/disk-manager";
 import { NotificationsPanel } from "@/modules/system/components/notifications-panel";
 import { StatusBar } from "@/modules/system/components/status-bar";
 import { SystemWidgets } from "@/modules/system/components/system-widgets";
+import { UpdateReminder } from "@/modules/system/components/update-reminder";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ConnectionLostScreen } from "./connection-lost-screen";
 import { Dock } from "./dock";
 import { LockScreen } from "./lock-screen";
 import { RebootOverlay } from "./reboot-overlay";
@@ -136,6 +139,9 @@ function DesktopShellInner() {
     wallpaperAccentColor,
   } = useDesktopAppearance();
   const rebootRecovery = useRebootRecovery();
+  const serverConnection = useServerConnection(
+    rebootRecovery.isHydrated && !rebootRecovery.isActive,
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -816,7 +822,7 @@ function DesktopShellInner() {
             isMinimized={minimizedWindows.includes("monitor")}
             animationsEnabled={appearance.animationsEnabled}
           >
-            <Monitor />
+            <Monitor onOpenDiskManager={() => openWindow("disk-manager")} />
           </Window>
         )}
 
@@ -975,6 +981,11 @@ function DesktopShellInner() {
           animationsEnabled={appearance.animationsEnabled}
         />
 
+        <UpdateReminder
+          enabled={!isLocked && !currentUser?.isDemoMode}
+          onOpenDetails={() => openSettingsSection("updates")}
+        />
+
         {isLocked && (
           <LockScreen
             wallpaper={appearance.wallpaper}
@@ -986,6 +997,18 @@ function DesktopShellInner() {
       </div>
 
       <AppLogsDialog target={logsTarget} onClose={() => setLogsTarget(null)} />
+
+      {serverConnection.phase !== "online" ? (
+        <ConnectionLostScreen
+          phase={serverConnection.phase}
+          isBrowserOffline={serverConnection.isBrowserOffline}
+          lostSince={serverConnection.lostSince}
+          serverRestarted={serverConnection.serverRestarted}
+          runtime={serverConnection.runtime}
+          logoSrc={serverConnection.logoSrc}
+          onCheckNow={serverConnection.checkNow}
+        />
+      ) : null}
     </div>
   );
 }

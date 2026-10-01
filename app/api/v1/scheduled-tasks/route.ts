@@ -1,8 +1,6 @@
 import { createScheduledTask, listScheduledTasks } from "@/lib/server/modules/scheduled-tasks/service";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { createRequestId, logServerAction } from "@/lib/server/logging/logger";
 import { z } from "zod";
 import { CRON_EXPRESSION_REGEX, createScheduledTaskSchema } from "@/lib/shared/contracts/scheduled-tasks";
@@ -10,29 +8,10 @@ import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
 
-async function authenticateRequest(request: NextRequest, requestId: string) {
-  const sessionToken = request.cookies.get(getAuthCookieName())?.value;
-  const session = await authenticateSession(sessionToken);
-  if (!session) {
-    logServerAction({
-      level: "warn",
-      layer: "api",
-      action: "scheduled-tasks.response",
-      status: "error",
-      requestId,
-      message: "Unauthorized scheduled-tasks request",
-    });
-    return null;
-  }
-  return session;
-}
-
 export async function GET(request: NextRequest) {
   const apiSession = await requireApiSession(request);
   if (apiSession.response) return apiSession.response;
   const requestId = createRequestId();
-  const session = await authenticateRequest(request, requestId);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const tasks = await listScheduledTasks();
@@ -55,8 +34,7 @@ export async function POST(request: NextRequest) {
   const apiSession = await requireApiSession(request);
   if (apiSession.response) return apiSession.response;
   const requestId = createRequestId();
-  const session = await authenticateRequest(request, requestId);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = apiSession.session;
 
   let body: unknown;
   try {

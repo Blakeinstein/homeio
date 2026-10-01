@@ -1,21 +1,20 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
 
 vi.mock("@/lib/server/modules/docker/maintenance-service", () => ({
   pruneDockerVolumes: vi.fn(),
 }));
 
 import { POST } from "@/app/api/v1/docker/prune/volumes/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
+import { requireApiSession } from "@/lib/server/modules/auth/api";
 import { pruneDockerVolumes } from "@/lib/server/modules/docker/maintenance-service";
 
 describe("/api/v1/docker/prune/volumes", () => {
   it("returns 401 for unauthenticated requests", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce(null);
+    vi.mocked(requireApiSession).mockResolvedValueOnce({
+      session: null,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
 
     const response = await POST(
       new NextRequest("http://localhost/api/v1/docker/prune/volumes"),
@@ -25,13 +24,6 @@ describe("/api/v1/docker/prune/volumes", () => {
   });
 
   it("prunes docker volumes for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(pruneDockerVolumes).mockResolvedValueOnce({
       command: "volumes",
       output: "Deleted Volumes:\nold-volume",
@@ -55,13 +47,6 @@ describe("/api/v1/docker/prune/volumes", () => {
   });
 
   it("returns 500 when prune fails", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(pruneDockerVolumes).mockRejectedValueOnce(new Error("docker volume prune failed"));
 
     const response = await POST(

@@ -8,6 +8,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [1.10.0] - 2026-10-01
+
+### Added
+
+- **A reminder above the dock when a Homeio update is available.** It shows the new version and the one installed, with **Update now**, **Details** (opens Settings → Updates) and **Later**, which hides it for an hour for that version; a newer version shows straight away. It follows the existing *Update notifications* setting, and is not shown on the lock screen or in demo mode. In the Docker image, where Homeio cannot update itself, it shows `docker compose pull && docker compose up -d` instead of an Update now button; the update status now reports this as `canSelfUpdate`.
+- **The desktop shows the real state of every app and container.** Stopped, crashed (with its exit code), restarting, unhealthy, degraded, paused and never started used to look the same, and containers Homeio did not deploy were grey whatever their state. They are now told apart, for Homeio apps and for other containers alike: running apps keep their colours, apps that are down turn grey, and a single glyph marks the states worth a look.
+- **The Monitor keeps an hour and a day of history.** CPU, memory, temperature and network (download and upload) are sampled every 5 seconds in the background, even with the Monitor closed, so opening or refreshing it shows the last **15 min** (the default) or **1 h** at full resolution, or the last **24 h** as one-minute averages. Until Homeio has been up for the whole range, the charts spread the history they have across their full width instead of filling in from one side. Each chart shows current, average and peak values and the reading under the pointer. The history lives in the server's memory: it survives page refreshes, not a Homeio restart, and the chart says since when it has data. The temperature chart is left out on machines without a sensor.
+- **A fuller Network tab in the Monitor.** Live download and upload, the default gateway and the DNS servers at the top; a throughput chart with the same 15 min, 1 h and 24 h views; and a card per active interface with its type, state, IPv4 and IPv6 addresses, MAC, link speed, DHCP or static address, live traffic, totals since boot and errors. Interfaces that are down or have no address are listed in one collapsed line each, and Docker and bridge interfaces are left out. In the Docker image the tab says it shows the container's network rather than the host's. The 1 h and 24 h charts now keep their real time scale and grey out the part with no data yet, so they look different from the 15 min view.
+- **A monitoring Disks tab in the Monitor.** It no longer embeds the disk manager: partitioning, formatting and wiping stay in Settings, one click away through *Manage disks…*. The tab shows disk usage, a read and write throughput chart with the 15 min, 1 h and 24 h views, and a card per disk with its model, type and bus, live read and write speed, SMART health, temperature and power-on time when the disk reports them, and its partitions. Throughput comes from `/proc/diskstats`, so it also works in the Docker image, where partition mount points are left out because the container only sees its own.
+- **App icons in the Monitor's container list.** A container that belongs to an installed app, as the app's own container or another service of its Compose stack, shows that app's icon instead of its initial.
+- **Every open desktop switches to the restart or update screen.** Only the browser that clicked Reboot, Shut down, Factory reset, Restore or Update used to show it; every other browser and device lost the connection and sat on a dead desktop until someone reloaded it. The action is now announced on the system stream every desktop keeps open, and Homeio waits two seconds before stopping so the message goes out.
+- **A reconnecting screen when Homeio stops answering.** A crash, a restart from the terminal, an update over SSH or a dropped network used to freeze the desktop with no explanation. A screen now fades in over the desktop, says how long Homeio has been away and keeps trying, with a **Try now** button. After 45 seconds it shows the restart command for your install (`systemctl` for the install script, `docker restart` in Docker). When Homeio answers again it says so and reloads if needed.
+
+### Changed
+
+- **Homeio is open source again, under the AGPL-3.0, from 1.10.0.** The Business Source License used for 1.9.6 and 1.9.7 was meant to stop companies from reselling Homeio, but it made Homeio source-available rather than open source, which kept it out of open source directories and worried contributors. The AGPL-3.0 is OSI-approved and still rules out a closed commercial fork: anyone who distributes a modified Homeio, or runs one as a service for others, must publish their changes under the same license. Use at home or at work is unrestricted. 1.9.5 and earlier stay MIT; 1.9.6 and 1.9.7 stay under the BSL.
+- **Update checks follow published releases instead of the `main` branch.** An update used to be offered the moment a PR landed on `main`, minutes before its GitHub release and Docker image existed, so a Docker user pulling at that point got the old image. The check now reads the release GitHub marks as Latest, and **Update now** installs exactly that release's tag. `install.sh` and `update.sh` do the same: without `HOMEIO_REPO_BRANCH` they clone or fetch the latest release's tag with git, and fall back to `main` with a warning when GitHub cannot be reached. Servers that set `HOMEIO_REPO_BRANCH` keep following that branch.
+- **The Cloudflare Tunnel connector is a Homeio component, not an app.** The `homeio-cloudflared` container is now labelled `io.homeio.component=cloudflare-tunnel` and no longer shows on the desktop as a container Homeio does not manage; connectors created by older versions are recognised by their exact name. A cloudflared you installed yourself stays a normal app, and Settings → Cloudflare Tunnel warns when it serves the same tunnel as Homeio's connector.
+- **The Monitor's Processes tab shows load and temperature at the top.** Net RX and Net TX were container totals since start, not live load; they stay in the Network tab. Their place goes to the 1-minute load average, with the 5 and 15-minute values under it, and the CPU card shows the current temperature in small type. The temperature chart sits next to the network chart and says so when the machine has no sensor. The separate Load Average card is gone, and Disk Usage moved to the Disks tab.
+- **The Monitor's history charts are drawn as smooth curves.** Busy charts used to turn into sharp zigzags between 5-second samples. The curve never rises above a peak or dips below zero between two samples.
+- **Homeio does much less work when nobody is looking.** System metrics are read from `/proc` and `/sys` instead of spawning about 130 commands per snapshot, which with the new history sampler would have been some 900 commands a minute on an idle server. Temperature, Wi-Fi link, the disk list, preferences, security settings and `docker compose version` are cached for a few seconds to a few minutes and dropped as soon as Homeio changes them.
+- **Homeio stays responsive with many desktops open.** Load tests with up to 400 simultaneous users found several bottlenecks, now gone: App Store requests share one catalog check instead of each running their own and rewriting the store registry, API routes look the session up once instead of twice, signed-out visitors share one "do accounts exist" lookup, and Homeio listens with a deeper accept queue. On script installs nginx keeps more idle connections to Homeio, closes them before Node does (which caused random 502 errors), and allows 4096 connections per worker instead of 768.
+- **The log file is rotated at 10 MB, and the Logs window opens instantly.** The file grew forever (81 MB after two months on the demo) and each Logs open read all of it to show the last 500 lines. Homeio now keeps the current file and one previous one, writes lines in batches, and reads the Logs window from the end of the file.
+
+### Security
+
+- **Security headers on every response, and nginx no longer shows its version.** The dashboard controls the whole machine, but nothing stopped another site from embedding it in a hidden frame to trick a signed-in admin into clicking. Homeio now sends `X-Frame-Options: DENY`, a `frame-ancestors 'none'` Content Security Policy, `X-Content-Type-Options: nosniff`, a Referrer-Policy, a Permissions-Policy that denies the camera and microphone and keeps location for Homeio's own pages, and HSTS. Because the app sends them, they apply behind the Cloudflare tunnel, behind nginx and in the Docker image. `install.sh` and `update.sh` also turn off `server_tokens` in nginx.
+- **Uploads are checked by Homeio before nginx streams them.** On script installs nginx sent uploads straight to the upload server, which only checked the cookie's signature: a signed-out cookie kept working until it expired, and demo visitors could upload while every other change was refused. nginx now asks Homeio first, which checks the session in the database and applies demo mode. The upload server keeps its own check as a second layer. Docker installs were not affected.
+
+### Fixed
+
+- **fail2ban would not start on Debian 12 and later.** These releases no longer ship rsyslog, so `/var/log/auth.log` does not exist and fail2ban gave up on the SSH jail. `install.sh` and `update.sh` now set fail2ban to read the systemd journal and install `python3-systemd`, which it needs for that.
+- **The Monitor's Disks tab was always empty in the Docker image, and said nothing about why.** Disks are listed with `lsblk`, which the image did not include, and any failure was turned into an empty list. The image now ships `lsblk`, so Docker installs list the host's disks, read-only: formatting, partitioning, mounting and wiping are disabled there with a note that they need the script install. When disks cannot be listed at all, the tab now gives the reason (not Linux, `lsblk` missing). Empty network block devices and zram swap are no longer listed as disks.
+- **The in-app update installed `main` even on a server following another branch.** The check compared against `HOMEIO_REPO_BRANCH`, but `update.sh` ran without it and fell back to `main`, so the version offered and the version installed could differ.
+- **Uploads failed with a 502 after a reboot or a restart of the D-Bus helper.** The upload server and the D-Bus helper shared `/run/home-server`, so restarting either one deleted the other's socket. The upload server now has its own runtime directory, `/run/home-server-upload`.
+- **The update check could fail for everyone on a busy server.** Every desktop and Settings load asked GitHub for the latest release, and GitHub allows 60 unauthenticated calls an hour, so a busy server (the public demo, within minutes) got an error until the hour reset. The latest version is now remembered for an hour, a failed check is retried after five minutes, and the last known version is shown in the meantime. **Check now** still asks GitHub directly.
+
+### Removed
+
+- **The tarball install path.** `install.sh` and `update.sh` only install with git now. `HOMEIO_RELEASE_TAG` and `HOMEIO_RELEASE_TARBALL_URL` stop the script with a message instead of being ignored; pin a version with `HOMEIO_REPO_BRANCH=v1.10.0`, which fetches that tag with git. The tarball path in `update.sh` ran `rsync --delete` without excluding `.env` or `bin/`, so it would have deleted the server's configuration.
+
+---
+
+## [1.9.7] - 2026-09-26
+
+### Changed
+
+- **The usage stats ping says how Homeio is installed and on which distribution.** Every server reported `linux` as its OS, which told nobody anything. The ping now adds `install` (`docker` or `host`) and, for host installs, the `ID` and `VERSION_ID` from `/etc/os-release`, such as `debian` `12` or `ubuntu` `24.04`. Docker installs send no distribution: inside a container that file describes the image, not the machine. The kernel version is deliberately left out; it is close to unique per machine and says little. [homeio.app/stats](https://homeio.app/stats) shows both breakdowns.
+
+---
+
+## [1.9.6] - 2026-09-26
+
 ### Security
 
 - **Dependencies with known vulnerabilities are updated.** Next.js 16.3.6 fixes server-side request forgery, a proxy bypass and several denial-of-service bugs; systeminformation fixes a command injection in `networkInterfaces()`, which Homeio calls for system stats; drizzle-orm, js-yaml, ws, sharp and a set of transitive packages are patched too. `npm audit --omit=dev` now reports nothing. The optional `usocket` add-on used by the D-Bus helper pulled in node-gyp 7 and the long-deprecated `request`; it is now built with node-gyp 11. The mobile app moves to Vite 8.
@@ -16,8 +71,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- **The usage stats ping says how Homeio is installed and on which distribution.** Every server reported `linux` as its OS, which told nobody anything. The ping now adds `install` (`docker` or `host`) and, for host installs, the `ID` and `VERSION_ID` from `/etc/os-release`, such as `debian` `12` or `ubuntu` `24.04`. Docker installs send no distribution: inside a container that file describes the image, not the machine. The kernel version is deliberately left out; it is close to unique per machine and says little. [homeio.app/stats](https://homeio.app/stats) shows both breakdowns.
 - **Homeio is now source-available under the Business Source License 1.1, replacing MIT.** Running it for yourself, your household or your organization stays free, including in production and with modifications. What needs a commercial license is offering it to others as a hosted or managed service, or selling it, including preinstalled on hardware. Each version converts to the Apache License 2.0 four years after release. Versions up to and including 1.9.5 remain MIT.
+
+---
+
+## [1.9.5] - 2026-09-26
 
 ### Added
 

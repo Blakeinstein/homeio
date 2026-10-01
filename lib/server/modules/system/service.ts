@@ -1,6 +1,7 @@
 import "server-only";
 
 import { LruCache } from "@/lib/server/cache/lru";
+import { memoizeAsync } from "@/lib/server/cache/memoize-async";
 import { serverEnv } from "@/lib/server/env";
 import { logServerAction } from "@/lib/server/logging/logger";
 import type { SmartDiskInfo, StorageMetrics, SystemMetricsSnapshot } from "@/lib/shared/contracts/system";
@@ -8,10 +9,29 @@ import os from "node:os";
 import { statfs } from "node:fs/promises";
 import path from "node:path";
 import si from "systeminformation";
+import { isContainerRuntime } from "@/lib/server/modules/system/update-service";
+import {
+  createDiskRateTracker,
+  readDiskCounters,
+  totalMegabytesPerSecond,
+} from "@/lib/server/modules/system/disk-activity";
+import { createCpuLoadTracker, readCpuTimes } from "@/lib/server/modules/system/cpu-activity";
+import {
+  createNetworkRateTracker,
+  readDefaultRouteInterface,
+  readInterfaceAddresses,
+  readInterfaceCounters,
+} from "@/lib/server/modules/system/network-activity";
 import {
   getNetworkStatusFromHelper,
   isNetworkHelperUnavailableError,
 } from "@/lib/server/modules/network/helper-client";
+
+// CPU load, disk throughput and network throughput are rates between two
+// kernel counter readings, one per collected snapshot.
+const snapshotCpuLoad = createCpuLoadTracker();
+const snapshotDiskRates = createDiskRateTracker();
+const snapshotNetworkRates = createNetworkRateTracker();
 
 const metricsCache = new LruCache<SystemMetricsSnapshot>(
   8,
@@ -22,6 +42,19 @@ const HELPER_STATUS_UNAVAILABLE_BACKOFF_MS = 15_000;
 const HELPER_STATUS_ERROR_LOG_COOLDOWN_MS = 30_000;
 const STORAGE_DETAILS_CACHE_TTL_MS = 60_000;
 const WIFI_NETWORKS_CACHE_TTL_MS = 30_000;
+const CPU_TEMPERATURE_CACHE_TTL_MS = 10_000;
+const WIFI_CONNECTIONS_CACHE_TTL_MS = 10_000;
+
+// Temperature and the Wi-Fi link change slowly, and systeminformation spawns
+// commands to read each of them: read them every 10s, not on every snapshot.
+const getCpuTemperature = memoizeAsync(
+  () => withFallback("system.metrics.cpuTemperature", () => si.cpuTemperature(), null),
+  CPU_TEMPERATURE_CACHE_TTL_MS,
+);
+const getWifiConnections = memoizeAsync(
+  () => withFallback("system.metrics.wifiConnections", () => si.wifiConnections(), []),
+  WIFI_CONNECTIONS_CACHE_TTL_MS,
+);
 
 /** Filesystem types that are virtual/pseudo and should not appear as real disk volumes. */
 const VIRTUAL_FS_TYPES = new Set([
@@ -525,6 +558,13 @@ function getWifiNetworksStale(): Awaited<ReturnType<typeof si.wifiNetworks>> {
   return wifiNetworksCache?.value ?? [];
 }
 
+/** Download and upload rate of an interface since the previous snapshot; null on the first one. */
+async function readNetworkRate(iface: string | null) {
+  if (!iface) return null;
+  const counters = await readInterfaceCounters(iface);
+  return counters ? snapshotNetworkRates(iface, counters, Date.now()) : null;
+}
+
 async function withFallback<T>(
   action: string,
   run: () => Promise<T>,
@@ -554,36 +594,26 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
   const defaultCpuPercent = Math.min((oneMinute / cpuCores) * 100, 100);
 
   const [
-    currentLoad,
     cpuTemperature,
     batteryData,
     wifiConnections,
     wifiNetworks,
-    networkInterfaces,
-    networkStats,
+    defaultRouteIface,
     storageMetrics,
+    diskCounters,
   ] = await Promise.all([
-    withFallback("system.metrics.currentLoad", () => si.currentLoad(), null),
-    withFallback(
-      "system.metrics.cpuTemperature",
-      () => si.cpuTemperature(),
-      null,
-    ),
+    getCpuTemperature(),
     withFallback("system.metrics.battery", () => si.battery(), null),
-    withFallback(
-      "system.metrics.wifiConnections",
-      () => si.wifiConnections(),
-      [],
-    ),
+    getWifiConnections(),
     Promise.resolve(getWifiNetworksStale()),
-    withFallback(
-      "system.metrics.networkInterfaces",
-      () => si.networkInterfaces(),
-      [],
-    ),
-    withFallback("system.metrics.networkStats", () => si.networkStats(), []),
+    readDefaultRouteInterface(),
     collectStorageMetrics(),
+    readDiskCounters(),
   ]);
+  const cpuLoadPercent = snapshotCpuLoad(readCpuTimes());
+  const diskIo = totalMegabytesPerSecond(
+    diskCounters ? snapshotDiskRates(diskCounters, Date.now()) : new Map(),
+  );
 
   const mainTemperature = toNullableMetric(cpuTemperature?.main);
   const normalizedCoreTemps = (cpuTemperature?.cores ?? [])
@@ -600,27 +630,19 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
       (connection) =>
         connection.iface.length > 0 || connection.ssid.trim().length > 0,
     ) ?? null;
-  const primaryNetworkInterface = primaryWifiConnection
-    ? (networkInterfaces.find(
-        (networkInterface) =>
-          networkInterface.iface === primaryWifiConnection.iface,
-      ) ?? null)
-    : (networkInterfaces.find((networkInterface) => networkInterface.default) ??
-      null);
+  // The Wi-Fi interface when there is a Wi-Fi link, else the one carrying the default route.
+  const primaryIface = primaryWifiConnection?.iface || defaultRouteIface;
+  const primaryAddresses = primaryIface
+    ? readInterfaceAddresses(primaryIface)
+    : { ipv4: null, ipv6: null };
 
   // Prefer D-Bus helper data for WiFi status (more reliable with NetworkManager)
   const connectedSsid = helperStatus?.ssid?.trim() ?? primaryWifiConnection?.ssid.trim() ?? "";
   const isWifiConnected = connectedSsid.length > 0;
-  // Ethernet: no SSID but a default interface has an IPv4 address
-  const isEthernetConnected =
-    !isWifiConnected && (primaryNetworkInterface?.ip4?.length ?? 0) > 0;
-  const preferredIface =
-    helperStatus?.iface ?? primaryNetworkInterface?.iface ?? primaryWifiConnection?.iface ?? null;
-  const primaryNetworkStats =
-    networkStats.find((stats) => stats.iface === preferredIface) ??
-    networkStats.find((stats) => stats.operstate === "up") ??
-    networkStats[0] ??
-    null;
+  // Ethernet: no SSID but the primary interface has an IPv4 address
+  const isEthernetConnected = !isWifiConnected && primaryAddresses.ipv4 !== null;
+  const preferredIface = helperStatus?.iface ?? primaryIface ?? null;
+  const networkRate = await readNetworkRate(preferredIface);
   const designedCapacityWh = batteryData?.hasBattery
     ? toNullableMetric(batteryData.designedCapacity, {
         precision: 0,
@@ -656,9 +678,7 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
       oneMinute,
       fiveMinute,
       fifteenMinute,
-      normalizedPercent: clampPercent(
-        currentLoad?.currentLoad ?? defaultCpuPercent,
-      ),
+      normalizedPercent: clampPercent(cpuLoadPercent ?? defaultCpuPercent),
     },
     memory: {
       totalBytes,
@@ -671,6 +691,7 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
       maxCelsius: maxTemperature,
       coresCelsius: normalizedCoreTemps,
     },
+    diskIo,
     battery: {
       hasBattery: Boolean(batteryData?.hasBattery),
       isCharging: Boolean(batteryData?.isCharging),
@@ -708,7 +729,7 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
     wifi: {
       connected: helperStatus?.connected ?? (isWifiConnected || isEthernetConnected),
       iface:
-        helperStatus?.iface ?? (primaryWifiConnection?.iface || primaryNetworkInterface?.iface || null),
+        helperStatus?.iface ?? (primaryIface || null),
       ssid: helperStatus?.ssid ?? (isWifiConnected ? connectedSsid : null),
       bssid: primaryWifiConnection?.bssid || null,
       signalPercent: helperStatus?.signalPercent ?? toNullablePercent(primaryWifiConnection?.quality),
@@ -717,37 +738,28 @@ async function collectSnapshot(): Promise<SystemMetricsSnapshot> {
         allowZero: true,
       }),
       downloadMbps: toNullableMetric(
-        primaryNetworkStats
-          ? (primaryNetworkStats.rx_sec * 8) / 1_000_000
-          : undefined,
+        networkRate ? (networkRate.rxBytesPerSec * 8) / 1_000_000 : undefined,
         {
           precision: 2,
           allowZero: true,
         },
       ),
       uploadMbps: toNullableMetric(
-        primaryNetworkStats
-          ? (primaryNetworkStats.tx_sec * 8) / 1_000_000
-          : undefined,
+        networkRate ? (networkRate.txBytesPerSec * 8) / 1_000_000 : undefined,
         {
           precision: 2,
           allowZero: true,
         },
       ),
-      ipv4:
-        helperStatus?.ipv4 ?? (primaryNetworkInterface && primaryNetworkInterface.ip4.length > 0
-          ? primaryNetworkInterface.ip4
-          : null),
-      ipv6:
-        primaryNetworkInterface && primaryNetworkInterface.ip6.length > 0
-          ? primaryNetworkInterface.ip6
-          : null,
+      ipv4: helperStatus?.ipv4 ?? primaryAddresses.ipv4,
+      ipv6: primaryAddresses.ipv6,
       availableNetworks,
     },
     process: {
       pid: process.pid,
       uptimeSeconds: process.uptime(),
       nodeVersion: process.version,
+      runtime: isContainerRuntime() ? "docker" : "host",
     },
   };
 }

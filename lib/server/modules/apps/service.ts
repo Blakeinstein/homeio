@@ -217,6 +217,7 @@ function mergeInstalledRuntimeState(input: {
   app: InstalledApp;
   composePath: string;
   runtimeStatus: InstalledApp["status"];
+  condition: InstalledApp["condition"];
   inferredWebUiPort: number | null;
   containerName: string | null;
   activeOperation: InstalledApp["activeOperation"];
@@ -226,6 +227,7 @@ function mergeInstalledRuntimeState(input: {
     composePath: input.composePath,
     webUiPort: input.inferredWebUiPort,
     status: input.runtimeStatus,
+    condition: input.condition ?? null,
     containerName: input.containerName,
     activeOperation: input.activeOperation ?? null,
   } satisfies InstalledApp;
@@ -291,6 +293,7 @@ export async function listInstalledApps(options?: { bypassCache?: boolean }) {
                 composePath: resolvedComposePath,
                 inferredWebUiPort,
                 runtimeStatus: runtime.status,
+                condition: runtime.condition,
                 containerName:
                   runtime.primaryContainerName ?? composeInfo.containerName,
                 activeOperation: activeOperationsByAppId[app.id] ?? null,
@@ -301,6 +304,7 @@ export async function listInstalledApps(options?: { bypassCache?: boolean }) {
                 composePath: resolvedComposePath,
                 inferredWebUiPort,
                 runtimeStatus: "unknown",
+                condition: { condition: "unknown", exitCode: null },
                 containerName: composeInfo.containerName,
                 activeOperation: activeOperationsByAppId[app.id] ?? null,
               });

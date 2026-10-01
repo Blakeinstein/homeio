@@ -1,9 +1,5 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/server/modules/auth/service", () => ({
-  authenticateSession: vi.fn(),
-}));
 
 vi.mock("@/lib/server/modules/system/preferences-service", () => ({
   getSystemPreferences: vi.fn(),
@@ -11,7 +7,7 @@ vi.mock("@/lib/server/modules/system/preferences-service", () => ({
 }));
 
 import { GET, PUT } from "@/app/api/v1/system/preferences/route";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
+import { requireApiSession } from "@/lib/server/modules/auth/api";
 import {
   getSystemPreferences,
   updateSystemPreferences,
@@ -19,13 +15,6 @@ import {
 
 describe("/api/v1/system/preferences", () => {
   it("returns hostname and timezone for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(getSystemPreferences).mockResolvedValueOnce({
       hostname: "home-node",
       timezone: "Europe/Paris",
@@ -48,7 +37,10 @@ describe("/api/v1/system/preferences", () => {
   });
 
   it("returns 401 for unauthenticated requests", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce(null);
+    vi.mocked(requireApiSession).mockResolvedValueOnce({
+      session: null,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
 
     const response = await GET(
       new NextRequest("http://localhost/api/v1/system/preferences"),
@@ -58,13 +50,6 @@ describe("/api/v1/system/preferences", () => {
   });
 
   it("updates system preferences for authenticated users", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(updateSystemPreferences).mockResolvedValueOnce({
       hostname: "homeio-box",
       timezone: "Europe/Berlin",
@@ -97,13 +82,6 @@ describe("/api/v1/system/preferences", () => {
   });
 
   it("returns 400 for invalid payloads", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
 
     const response = await PUT(
       new NextRequest("http://localhost/api/v1/system/preferences", {
@@ -122,13 +100,6 @@ describe("/api/v1/system/preferences", () => {
   });
 
   it("returns 400 for invalid hostname/timezone values", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(updateSystemPreferences).mockRejectedValueOnce(
       new Error("Invalid timezone. Choose one of the supported timezone options."),
     );
@@ -153,13 +124,6 @@ describe("/api/v1/system/preferences", () => {
   });
 
   it("returns 500 when the service fails", async () => {
-    vi.mocked(authenticateSession).mockResolvedValueOnce({
-      sessionId: "s1",
-      userId: "u1",
-      username: "ahmed",
-      passwordHash: "hash",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
     vi.mocked(updateSystemPreferences).mockRejectedValueOnce(new Error("hostnamectl failed"));
 
     const response = await PUT(

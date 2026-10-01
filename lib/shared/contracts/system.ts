@@ -155,6 +155,8 @@ export type SystemUpdateStatus = {
   latestVersion: string | null;
   updateAvailable: boolean;
   checkedAt: string | null;
+  /** False in the Docker image, where updating means pulling a new image. */
+  canSelfUpdate: boolean;
 };
 
 export type SystemUpdateApplyAcceptedResponse = {
@@ -205,6 +207,29 @@ export type SystemRestoreAcceptedResponse = {
   backupId: string;
 };
 
+export type MetricsHistoryRange = "15m" | "1h" | "24h";
+
+/** One sample of the Monitor's history charts; null when the host has no reading. */
+export type MetricsHistoryPoint = {
+  /** Unix time in milliseconds. */
+  t: number;
+  cpuPercent: number | null;
+  memoryPercent: number | null;
+  temperatureCelsius: number | null;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  /** Read and written by all disks, in MB/s. */
+  diskReadMBps: number | null;
+  diskWriteMBps: number | null;
+};
+
+export type MetricsHistory = {
+  range: MetricsHistoryRange;
+  /** Spacing between points: 5 s for 15m and 1h, 60 s (averages) for 24h. */
+  intervalSeconds: number;
+  points: MetricsHistoryPoint[];
+};
+
 export type SystemMetricsSnapshot = {
   timestamp: string;
   hostname: string;
@@ -214,6 +239,8 @@ export type SystemMetricsSnapshot = {
   cpu: CpuLoad;
   memory: MemoryUsage;
   temperature: TemperatureMetrics;
+  /** All disks together, in MB/s; null until two readings exist or off Linux. */
+  diskIo?: { readMBps: number | null; writeMBps: number | null };
   battery: BatteryMetrics;
   storage?: StorageMetrics;
   wifi: WifiMetrics;
@@ -221,10 +248,23 @@ export type SystemMetricsSnapshot = {
     pid: number;
     uptimeSeconds: number;
     nodeVersion: string;
+    // How Homeio runs, so the desktop can name the right restart command once
+    // the server stops answering. Missing from servers older than 1.10.
+    runtime?: "docker" | "host";
   };
 };
 
+export type SystemPowerAction = "reboot" | "shutdown" | "factory-reset" | "restore" | "update";
+
+// Sent to every open desktop when one session starts an action that takes
+// Homeio down, so they all switch to the recovery screen instead of just
+// losing the connection.
+export type SystemPowerActionEvent = {
+  action: SystemPowerAction;
+  startedAt: string;
+};
+
 export type SystemStreamEvent = {
-  type: "metrics.updated" | "heartbeat";
-  data: SystemMetricsSnapshot | { timestamp: string };
+  type: "metrics.updated" | "heartbeat" | "system.power-action";
+  data: SystemMetricsSnapshot | { timestamp: string } | SystemPowerActionEvent;
 };

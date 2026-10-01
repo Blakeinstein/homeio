@@ -4,6 +4,7 @@ import {
   logServerAction,
   withServerTiming,
 } from "@/lib/server/logging/logger";
+import { subscribeToPowerActions } from "@/lib/server/modules/system/power-action-events";
 import { getSystemMetricsSnapshot } from "@/lib/server/modules/system/service";
 import { toSseChunk } from "@/lib/server/realtime/sse";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
@@ -56,6 +57,11 @@ export async function GET(request: Request) {
 
           void pushMetrics();
 
+          const unsubscribePowerActions = subscribeToPowerActions((event) => {
+            if (closed) return;
+            controller.enqueue(encoder.encode(toSseChunk("system.power-action", event)));
+          });
+
           const metricsInterval = setInterval(
             () => {
               void pushMetrics();
@@ -76,6 +82,7 @@ export async function GET(request: Request) {
           const close = () => {
             if (closed) return;
             closed = true;
+            unsubscribePowerActions();
             clearInterval(metricsInterval);
             clearInterval(heartbeatInterval);
             controller.close();

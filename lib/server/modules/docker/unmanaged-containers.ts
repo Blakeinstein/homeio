@@ -3,6 +3,12 @@ import "server-only";
 import { listContainers } from "@/lib/server/modules/docker/stats";
 import { listInstalledStacksFromDb } from "@/lib/server/modules/apps/stacks-repository";
 import { logServerAction } from "@/lib/server/logging/logger";
+import { homeioComponentOf } from "@/lib/server/modules/integrations/cloudflared-connectors";
+import {
+  parseDockerStatusLine,
+  summarizeContainers,
+  type AppConditionSummary,
+} from "@/lib/shared/app-condition";
 
 const COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
@@ -14,6 +20,8 @@ export type UnmanagedContainer = {
   state: string;
   /** Docker's human status line, e.g. "Up 3 days". */
   status: string;
+  /** What the container is doing, read from state and status line. */
+  condition: AppConditionSummary;
   composeProject: string | null;
 };
 
@@ -30,7 +38,8 @@ function toContainerName(names: string[] | undefined, id: string) {
  * Homeio drives its own apps through `docker compose -p <stackName>`, so a
  * container whose compose project matches a known stack is ours. Everything
  * else was started by something else -- CasaOS, Portainer, a bare `docker run`
- * -- and is surfaced read-only for now.
+ * -- and is surfaced read-only for now. Homeio's own components, such as the
+ * Cloudflare connector, are neither: they live in Settings.
  */
 export async function listUnmanagedContainers(): Promise<UnmanagedContainer[]> {
   const [containers, stacks] = await Promise.all([
@@ -52,6 +61,7 @@ export async function listUnmanagedContainers(): Promise<UnmanagedContainer[]> {
 
   return containers
     .filter((container) => {
+      if (homeioComponentOf(container)) return false;
       const project = container.Labels?.[COMPOSE_PROJECT_LABEL];
       return !project || !managedProjects.has(project);
     })
@@ -61,6 +71,9 @@ export async function listUnmanagedContainers(): Promise<UnmanagedContainer[]> {
       image: container.Image ?? "",
       state: container.State ?? "unknown",
       status: container.Status ?? "",
+      condition: summarizeContainers([
+        { state: container.State ?? "unknown", ...parseDockerStatusLine(container.Status ?? "") },
+      ]),
       composeProject: container.Labels?.[COMPOSE_PROJECT_LABEL] ?? null,
     }))
     .sort((left, right) => left.name.localeCompare(right.name));

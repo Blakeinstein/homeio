@@ -5,37 +5,15 @@ import {
 } from "@/lib/server/modules/scheduled-tasks/service";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { createRequestId, logServerAction } from "@/lib/server/logging/logger";
 import { updateScheduledTaskSchema } from "@/lib/shared/contracts/scheduled-tasks";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
 export const runtime = "nodejs";
 
-async function authenticateRequest(request: NextRequest, requestId: string) {
-  const sessionToken = request.cookies.get(getAuthCookieName())?.value;
-  const session = await authenticateSession(sessionToken);
-  if (!session) {
-    logServerAction({
-      level: "warn",
-      layer: "api",
-      action: "scheduled-tasks.taskId.response",
-      status: "error",
-      requestId,
-      message: "Unauthorized scheduled-tasks request",
-    });
-    return null;
-  }
-  return session;
-}
-
 export async function GET(request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const apiSession = await requireApiSession(request);
   if (apiSession.response) return apiSession.response;
-  const requestId = createRequestId();
-  const session = await authenticateRequest(request, requestId);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { taskId } = await params;
   const task = await getScheduledTask(taskId);
@@ -47,8 +25,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const apiSession = await requireApiSession(request);
   if (apiSession.response) return apiSession.response;
   const requestId = createRequestId();
-  const session = await authenticateRequest(request, requestId);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = apiSession.session;
 
   let body: unknown;
   try {
@@ -94,8 +71,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   const apiSession = await requireApiSession(request);
   if (apiSession.response) return apiSession.response;
   const requestId = createRequestId();
-  const session = await authenticateRequest(request, requestId);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = apiSession.session;
 
   const { taskId } = await params;
   try {

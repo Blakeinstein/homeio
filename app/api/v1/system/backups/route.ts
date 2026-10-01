@@ -5,8 +5,6 @@ import {
   logServerAction,
   withServerTiming,
 } from "@/lib/server/logging/logger";
-import { getAuthCookieName } from "@/lib/server/modules/auth/cookies";
-import { authenticateSession } from "@/lib/server/modules/auth/service";
 import { getSystemBackupsSnapshot } from "@/lib/server/modules/system/backup-service";
 import { requireApiSession } from "@/lib/server/modules/auth/api";
 
@@ -16,7 +14,6 @@ export async function GET(request: NextRequest) {
   const apiSession = await requireApiSession(request);
   if (apiSession.response) return apiSession.response;
   const requestId = createRequestId();
-  const sessionToken = request.cookies.get(getAuthCookieName())?.value;
 
   try {
     return await withServerTiming(
@@ -26,10 +23,7 @@ export async function GET(request: NextRequest) {
         requestId,
       },
       async () => {
-        const session = await authenticateSession(sessionToken);
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        const session = apiSession.session;
 
         const snapshot = await getSystemBackupsSnapshot();
 
