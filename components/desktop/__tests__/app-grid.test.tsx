@@ -638,4 +638,28 @@ describe("AppGrid context menu", () => {
     expect(openSpy).not.toHaveBeenCalled();
   });
 
+  it("opens the install-custom-app menu from empty desktop space", () => {
+    const onOpenCustomInstall = vi.fn();
+
+    const { container } = render(
+      <AppGrid animationsEnabled={false} onOpenCustomInstall={onOpenCustomInstall} />,
+    );
+
+    const section = container.querySelector("section")!;
+    fireEvent.contextMenu(section, { clientX: 200, clientY: 200 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Install Custom App" }));
+    expect(onOpenCustomInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open the background menu when right-clicking an app icon", () => {
+    const onOpenCustomInstall = vi.fn();
+
+    render(<AppGrid animationsEnabled={false} onOpenCustomInstall={onOpenCustomInstall} />);
+
+    openContextMenuFor("Plex");
+    expect(screen.queryByRole("button", { name: "Install Custom App" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open Dashboard" })).toBeTruthy();
+  });
+
 });

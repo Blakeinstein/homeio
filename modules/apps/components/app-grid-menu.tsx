@@ -4,6 +4,7 @@ import type { AppItem } from "@/modules/apps/components/app-grid-presenters";
 import {
   Copy,
   ExternalLink,
+  Package,
   Play,
   RefreshCw,
   RotateCcw,
@@ -117,6 +118,30 @@ export function AppGridContextMenu({
         danger
         disabled={isBusy}
         onClick={() => onAction("remove")}
+      />
+    </div>
+  );
+}
+
+export function AppGridBackgroundMenu({
+  x,
+  y,
+  onInstallCustomApp,
+}: {
+  x: number;
+  y: number;
+  onInstallCustomApp: () => void;
+}) {
+  return (
+    <div
+      className="fixed z-[220] min-w-48 rounded-xl border border-glass-border bg-popover py-1.5 shadow-2xl shadow-black/50 backdrop-blur-2xl"
+      style={{ left: x, top: y }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <AppGridContextMenuItem
+        icon={<Package className="size-3.5" />}
+        label="Install Custom App"
+        onClick={onInstallCustomApp}
       />
     </div>
   );

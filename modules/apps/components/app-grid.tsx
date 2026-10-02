@@ -2,7 +2,7 @@
 
 import { AppGridContent } from "@/modules/apps/components/app-grid-content";
 import { useAppGridController } from "@/modules/apps/components/app-grid-controller";
-import { AppGridContextMenu } from "@/modules/apps/components/app-grid-menu";
+import { AppGridBackgroundMenu, AppGridContextMenu } from "@/modules/apps/components/app-grid-menu";
 import type { AppActionTarget } from "@/modules/apps/components/app-grid-presenters";
 import { UninstallAppDialog } from "@/modules/apps/components/uninstall-app-dialog";
 import { X } from "@/components/icons/platform-icons";
@@ -11,6 +11,7 @@ export type { AppActionTarget } from "@/modules/apps/components/app-grid-present
 type AppGridProps = {
   iconSize?: "small" | "medium" | "large";
   animationsEnabled?: boolean;
+  onOpenCustomInstall?: () => void;
   onOpenDashboard?: (target: AppActionTarget) => void;
   onViewLogs?: (target: AppActionTarget) => void;
   onOpenTerminal?: (target: AppActionTarget) => void;
@@ -21,6 +22,7 @@ type AppGridProps = {
 export function AppGrid({
   iconSize = "medium",
   animationsEnabled = true,
+  onOpenCustomInstall,
   onOpenDashboard,
   onViewLogs,
   onOpenTerminal,
@@ -29,6 +31,7 @@ export function AppGrid({
 }: AppGridProps) {
   const controller = useAppGridController({
     onCopyUrl,
+    onOpenCustomInstall,
     onOpenDashboard,
     onOpenSettings,
     onOpenTerminal,
@@ -39,6 +42,7 @@ export function AppGrid({
     <section
       className="flex-1 px-6 pt-4 pb-6 overflow-y-auto"
       onClick={controller.closeContextMenu}
+      onContextMenu={controller.openBackgroundContextMenu}
     >
       {controller.actionError ? (
         <div className="mt-4 flex items-start justify-between gap-2 rounded-lg border border-status-red/30 bg-status-red/10 px-3 py-2 text-xs text-status-red">
@@ -84,6 +88,14 @@ export function AppGrid({
           onAction={(action) => {
             void controller.handleMenuAction(action);
           }}
+        />
+      ) : null}
+
+      {controller.isBackgroundContextMenuOpen && controller.contextMenu ? (
+        <AppGridBackgroundMenu
+          x={controller.contextMenu.x}
+          y={controller.contextMenu.y}
+          onInstallCustomApp={controller.handleInstallCustomApp}
         />
       ) : null}
 
