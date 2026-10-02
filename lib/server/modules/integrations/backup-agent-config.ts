@@ -19,6 +19,12 @@ function normalize(value: string | undefined) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizePort(value: number | undefined) {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < 1 || value > 65535) return null;
+  return value;
+}
+
 export async function getBackupAgentConfig(): Promise<BackupAgentConfig> {
   await ensureSettingsRow();
 
@@ -26,6 +32,7 @@ export async function getBackupAgentConfig(): Promise<BackupAgentConfig> {
     .select({
       enabled: settings.backupAgentEnabled,
       url: settings.backupAgentUrl,
+      port: settings.backupAgentPort,
       configPath: settings.backupAgentConfigPath,
     })
     .from(settings)
@@ -36,6 +43,7 @@ export async function getBackupAgentConfig(): Promise<BackupAgentConfig> {
   return {
     enabled: Boolean(row?.enabled),
     url: row?.url ?? null,
+    port: row?.port ?? null,
     configPath: row?.configPath ?? null,
   };
 }
@@ -43,6 +51,7 @@ export async function getBackupAgentConfig(): Promise<BackupAgentConfig> {
 export async function saveBackupAgentConfig(input: {
   enabled: boolean;
   url?: string;
+  port?: number;
   configPath?: string;
 }): Promise<BackupAgentConfig> {
   await ensureSettingsRow();
@@ -52,6 +61,7 @@ export async function saveBackupAgentConfig(input: {
     .set({
       backupAgentEnabled: input.enabled,
       backupAgentUrl: normalize(input.url),
+      backupAgentPort: normalizePort(input.port),
       backupAgentConfigPath: normalize(input.configPath),
       updatedAt: new Date(),
     })

@@ -101,7 +101,11 @@ port: 3064                  # optional: overrides the auto-detected published po
 primaryContainer: sure-web  # optional: which unit's container represents the app (for multi-container services)
 ```
 
-If you also run [homelab-backup](https://github.com/Blakeinstein/homelab-backup) — a standalone backup agent that lives alongside your quadlet services but runs as its own systemd service rather than a container — turn it on in **Settings → Integrations → homelab-backup**. Enabling it shows a Backups widget linking to its dashboard. Leave the URL and config path fields blank to use the defaults (dashboard at `http://127.0.0.1:3095`, config auto-detected under `<QUADLET_SERVICES_ROOT>/homelab-backup/backup-services.yaml`), or fill them in if yours differs. `HOMELAB_BACKUP_URL` sets the same default at the environment level, for scripted deploys.
+If you also run [homelab-backup](https://github.com/Blakeinstein/homelab-backup) — a standalone backup agent that lives alongside your quadlet services but runs as its own systemd service rather than a container — turn it on in **Settings → Integrations → homelab-backup**. Enabling it shows a Backups widget linking to its dashboard. Choose how to reach it:
+- **Fixed URL** — an absolute address, e.g. `http://127.0.0.1:3095` (its own default if you leave this blank).
+- **Relative port** — just a port number (e.g. `3095`); Homeio builds the link from whatever host and protocol you're currently viewing its own dashboard on. Use this instead of a fixed URL whenever you reach Homeio over Tailscale, a tunnel, or a LAN IP rather than `127.0.0.1` — a fixed `127.0.0.1` URL would open on the viewer's own machine, not the server.
+
+Leave the config path blank to auto-detect it under `<QUADLET_SERVICES_ROOT>/homelab-backup/backup-services.yaml`, or set it if yours differs. `HOMELAB_BACKUP_URL` sets the same default as the Fixed URL field, at the environment level, for scripted deploys.
 
 **Update:**
 

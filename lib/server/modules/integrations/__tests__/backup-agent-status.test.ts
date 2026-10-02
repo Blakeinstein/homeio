@@ -21,9 +21,6 @@ vi.mock("@/lib/server/modules/integrations/backup-agent-config", () => ({
   getBackupAgentConfig: mockGetBackupAgentConfig,
 }));
 
-const fetchMock = vi.fn();
-vi.stubGlobal("fetch", fetchMock);
-
 async function freshGetBackupAgentStatus() {
   vi.resetModules();
   const mod = await import("@/lib/server/modules/integrations/backup-agent-status");
@@ -38,21 +35,19 @@ beforeEach(() => {
 
 describe("getBackupAgentStatus", () => {
   it("is disabled when the saved config has not enabled it", async () => {
-    mockGetBackupAgentConfig.mockResolvedValue({ enabled: false, url: null, configPath: null });
+    mockGetBackupAgentConfig.mockResolvedValue({ enabled: false, url: null, port: null, configPath: null });
     const getBackupAgentStatus = await freshGetBackupAgentStatus();
 
     const status = await getBackupAgentStatus();
 
-    expect(status).toEqual({ enabled: false, configFound: null, dashboardUrl: null, reachable: null });
+    expect(status).toEqual({ enabled: false, configFound: null, dashboardUrl: null, relativePort: null });
     expect(mockAccess).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("auto-detects the config path under QUADLET_SERVICES_ROOT/homelab-backup when none is saved", async () => {
     serverEnvMock.QUADLET_SERVICES_ROOT = "/fake/services";
-    mockGetBackupAgentConfig.mockResolvedValue({ enabled: true, url: null, configPath: null });
+    mockGetBackupAgentConfig.mockResolvedValue({ enabled: true, url: null, port: null, configPath: null });
     mockAccess.mockResolvedValue(undefined);
-    fetchMock.mockResolvedValue({ ok: true });
     const getBackupAgentStatus = await freshGetBackupAgentStatus();
 
     const status = await getBackupAgentStatus();
@@ -62,18 +57,18 @@ describe("getBackupAgentStatus", () => {
       enabled: true,
       configFound: true,
       dashboardUrl: "http://127.0.0.1:3095",
-      reachable: true,
+      relativePort: null,
     });
   });
 
-  it("reports configFound: false but still probes the URL when no config file is found", async () => {
+  it("reports configFound: false when no config file is found at an explicit path", async () => {
     mockGetBackupAgentConfig.mockResolvedValue({
       enabled: true,
       url: "http://backup.local:9000",
+      port: null,
       configPath: "/missing/backup-services.yaml",
     });
     mockAccess.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
-    fetchMock.mockResolvedValue({ ok: true });
     const getBackupAgentStatus = await freshGetBackupAgentStatus();
 
     const status = await getBackupAgentStatus();
@@ -82,13 +77,17 @@ describe("getBackupAgentStatus", () => {
       enabled: true,
       configFound: false,
       dashboardUrl: "http://backup.local:9000",
-      reachable: true,
+      relativePort: null,
     });
   });
 
   it("falls back to configFound: false when no path could be resolved at all", async () => {
-    mockGetBackupAgentConfig.mockResolvedValue({ enabled: true, url: "http://backup.local:9000", configPath: null });
-    fetchMock.mockResolvedValue({ ok: true });
+    mockGetBackupAgentConfig.mockResolvedValue({
+      enabled: true,
+      url: "http://backup.local:9000",
+      port: null,
+      configPath: null,
+    });
     const getBackupAgentStatus = await freshGetBackupAgentStatus();
 
     const status = await getBackupAgentStatus();
@@ -98,23 +97,38 @@ describe("getBackupAgentStatus", () => {
   });
 
   it("prefers the saved URL, then HOMELAB_BACKUP_URL, then the agent's own default", async () => {
-    mockGetBackupAgentConfig.mockResolvedValue({ enabled: true, url: null, configPath: null });
+    mockGetBackupAgentConfig.mockResolvedValue({ enabled: true, url: null, port: null, configPath: null });
     serverEnvMock.HOMELAB_BACKUP_URL = "http://env-configured:4000";
-    fetchMock.mockResolvedValue({ ok: true });
     const getBackupAgentStatus = await freshGetBackupAgentStatus();
 
     const status = await getBackupAgentStatus();
 
     expect(status.dashboardUrl).toBe("http://env-configured:4000");
+    expect(status.relativePort).toBeNull();
   });
 
-  it("reports unreachable when the request fails", async () => {
-    mockGetBackupAgentConfig.mockResolvedValue({ enabled: true, url: "http://backup.local:9000", configPath: null });
-    fetchMock.mockRejectedValue(new Error("connection refused"));
+  it("exposes a relative port instead of an absolute URL when no URL is set", async () => {
+    mockGetBackupAgentConfig.mockResolvedValue({ enabled: true, url: null, port: 3095, configPath: null });
     const getBackupAgentStatus = await freshGetBackupAgentStatus();
 
     const status = await getBackupAgentStatus();
 
-    expect(status.reachable).toBe(false);
+    expect(status.dashboardUrl).toBeNull();
+    expect(status.relativePort).toBe(3095);
+  });
+
+  it("prefers an absolute URL over a saved relative port when both are set", async () => {
+    mockGetBackupAgentConfig.mockResolvedValue({
+      enabled: true,
+      url: "http://backup.local:9000",
+      port: 3095,
+      configPath: null,
+    });
+    const getBackupAgentStatus = await freshGetBackupAgentStatus();
+
+    const status = await getBackupAgentStatus();
+
+    expect(status.dashboardUrl).toBe("http://backup.local:9000");
+    expect(status.relativePort).toBeNull();
   });
 });

@@ -2,7 +2,7 @@
 
 import { render, screen } from "@testing-library/react";
 import { Cpu, MemoryStick, Thermometer } from "@/components/icons/platform-icons";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SystemWidgetsViewModel } from "@/modules/system/components/system-widgets/types";
 
 const mockUseSystemWidgetsData = vi.fn<() => SystemWidgetsViewModel>();
@@ -14,6 +14,10 @@ vi.mock("@/modules/system/components/system-widgets/use-system-widgets-data", ()
 import { SystemWidgets } from "@/modules/system/components/system-widgets";
 
 describe("SystemWidgets", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("renders sections and values from backend view model", () => {
     mockUseSystemWidgetsData.mockReturnValue({
       uptime: { days: 1, hours: 4, minutes: 28 },
@@ -54,8 +58,9 @@ describe("SystemWidgets", () => {
         { label: "Networks", value: "4", sub: "nearby" },
         { label: "Weather", value: "21°", sub: "Tunis, Tunisia" },
       ],
-      backupAgent: { enabled: false, dashboardUrl: null, reachable: null },
+      backupAgent: { enabled: false, dashboardUrl: null, relativePort: null },
     });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
 
     render(<SystemWidgets />);
 
@@ -66,9 +71,12 @@ describe("SystemWidgets", () => {
     expect(screen.getByText("192.168.1.30")).toBeTruthy();
     expect(screen.getByText("21°")).toBeTruthy();
     expect(screen.queryByText("Backups")).toBeNull();
+    // Disabled: the reachability probe never fires.
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("shows a Backups card with a link when homelab-backup is configured", () => {
+  it("shows a Backups card with a link when homelab-backup is configured", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null));
     mockUseSystemWidgetsData.mockReturnValue({
       uptime: { days: 1, hours: 4, minutes: 28 },
       resources: [],
@@ -81,13 +89,13 @@ describe("SystemWidgets", () => {
         ssid: "offline",
       },
       quickStats: [],
-      backupAgent: { enabled: true, dashboardUrl: "http://127.0.0.1:3095", reachable: true },
+      backupAgent: { enabled: true, dashboardUrl: "http://127.0.0.1:3095", relativePort: null },
     });
 
     render(<SystemWidgets />);
 
     expect(screen.getByText("Backups")).toBeTruthy();
-    expect(screen.getByText("Reachable")).toBeTruthy();
+    expect(await screen.findByText("Reachable")).toBeTruthy();
     const link = screen.getByText("View backup stats").closest("a");
     expect(link?.getAttribute("href")).toBe("http://127.0.0.1:3095");
   });

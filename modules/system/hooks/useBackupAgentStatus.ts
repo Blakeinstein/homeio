@@ -15,7 +15,7 @@ async function fetchBackupAgentStatus(): Promise<BackupAgentStatus> {
   return json.data;
 }
 
-/** Whether homelab-backup (a standalone agent, not a Homeio-managed container) is configured and reachable. */
+/** Whether homelab-backup (a standalone agent, not a Homeio-managed container) is configured, and how to link to its dashboard. */
 export function useBackupAgentStatus() {
   return useQuery({
     queryKey: queryKeys.backupAgentStatus,

@@ -230,6 +230,12 @@ export const settings = pgTable("settings", {
   // when a backup-services.yaml is found), true/false is an explicit override.
   backupAgentEnabled: boolean("backup_agent_enabled"),
   backupAgentUrl: text("backup_agent_url"),
+  // Alternative to backupAgentUrl: reach the dashboard on this port using
+  // whatever host/protocol the browser is already using, rather than a
+  // fixed URL -- the right choice whenever Homeio itself is reached over
+  // Tailscale/a tunnel/a LAN IP that isn't 127.0.0.1. Ignored when
+  // backupAgentUrl is set.
+  backupAgentPort: integer("backup_agent_port"),
   backupAgentConfigPath: text("backup_agent_config_path"),
 });
 

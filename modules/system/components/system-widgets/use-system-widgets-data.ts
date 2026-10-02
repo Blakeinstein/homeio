@@ -118,7 +118,7 @@ export function useSystemWidgetsData(): SystemWidgetsViewModel {
       backupAgent: {
         enabled: backupAgentStatus?.enabled ?? false,
         dashboardUrl: backupAgentStatus?.dashboardUrl ?? null,
-        reachable: backupAgentStatus?.reachable ?? null,
+        relativePort: backupAgentStatus?.relativePort ?? null,
       },
     };
   }, [backupAgentStatus, installedApps, isDemoMode, metrics, weather]);

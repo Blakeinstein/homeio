@@ -34,7 +34,7 @@ export type QuickStatItem = {
 export type BackupAgentWidgetData = {
   enabled: boolean;
   dashboardUrl: string | null;
-  reachable: boolean | null;
+  relativePort: number | null;
 };
 
 export type SystemWidgetsViewModel = {

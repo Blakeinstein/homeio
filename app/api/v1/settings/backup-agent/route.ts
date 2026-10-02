@@ -41,6 +41,7 @@ export async function PUT(request: Request) {
     const enabled = Boolean(body.enabled);
     const url = typeof body.url === "string" ? body.url.trim() : "";
     const configPath = typeof body.configPath === "string" ? body.configPath.trim() : "";
+    const port = typeof body.port === "number" ? body.port : undefined;
 
     if (enabled && url.length > 0) {
       try {
@@ -53,7 +54,16 @@ export async function PUT(request: Request) {
       }
     }
 
-    const config = await saveBackupAgentConfig({ enabled, url, configPath });
+    if (enabled && url.length === 0 && port !== undefined) {
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return NextResponse.json(
+          { error: "Port must be a number between 1 and 65535.", code: "validation_error" },
+          { status: 400 },
+        );
+      }
+    }
+
+    const config = await saveBackupAgentConfig({ enabled, url, port, configPath });
     invalidateBackupAgentStatusCache();
 
     return NextResponse.json({ data: config });

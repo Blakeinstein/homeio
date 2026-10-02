@@ -137,7 +137,7 @@ describe("useSystemWidgetsData", () => {
       },
     });
     mockUseBackupAgentStatus.mockReturnValue({
-      data: { enabled: true, dashboardUrl: "http://127.0.0.1:3095", reachable: true },
+      data: { enabled: true, dashboardUrl: "http://127.0.0.1:3095", relativePort: null },
     });
 
     const { result } = renderHook(() => useSystemWidgetsData());
@@ -164,7 +164,7 @@ describe("useSystemWidgetsData", () => {
     expect(result.current.backupAgent).toEqual({
       enabled: true,
       dashboardUrl: "http://127.0.0.1:3095",
-      reachable: true,
+      relativePort: null,
     });
   });
 
@@ -195,7 +195,7 @@ describe("useSystemWidgetsData", () => {
     expect(result.current.backupAgent).toEqual({
       enabled: false,
       dashboardUrl: null,
-      reachable: null,
+      relativePort: null,
     });
   });
 });

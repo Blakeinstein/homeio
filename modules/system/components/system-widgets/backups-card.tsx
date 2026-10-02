@@ -1,6 +1,10 @@
+"use client";
+
 import { ExternalLink, FileArchive } from "@/components/icons/platform-icons";
+import { resolveBackupAgentDashboardUrl } from "@/lib/shared/backup-agent-url";
 import type { BackupAgentWidgetData } from "@/modules/system/components/system-widgets/types";
 import { WidgetCard } from "@/modules/system/components/system-widgets/widget-card";
+import { useUrlReachability } from "@/modules/system/hooks/useUrlReachability";
 
 type BackupsCardProps = {
   backupAgent: BackupAgentWidgetData;
@@ -13,9 +17,12 @@ type BackupsCardProps = {
  * answered just now. Renders nothing when no backup-services.yaml was found.
  */
 export function BackupsCard({ backupAgent }: BackupsCardProps) {
-  if (!backupAgent.enabled || !backupAgent.dashboardUrl) return null;
+  const dashboardUrl = backupAgent.enabled ? resolveBackupAgentDashboardUrl(backupAgent) : null;
+  const reachable = useUrlReachability(dashboardUrl);
 
-  const reachable = backupAgent.reachable === true;
+  if (!backupAgent.enabled || !dashboardUrl) return null;
+
+  const isReachable = reachable === true;
 
   return (
     <WidgetCard title="Backups" icon={FileArchive}>
@@ -24,18 +31,24 @@ export function BackupsCard({ backupAgent }: BackupsCardProps) {
           <span className="text-xs text-muted-foreground">homelab-backup</span>
           <span
             className={`inline-flex items-center gap-1.5 text-xs font-medium ${
-              reachable ? "text-status-green" : "text-status-red"
+              reachable === null
+                ? "text-muted-foreground"
+                : isReachable
+                  ? "text-status-green"
+                  : "text-status-red"
             }`}
           >
             <span
-              className={`size-1.5 rounded-full ${reachable ? "bg-status-green" : "bg-status-red"}`}
+              className={`size-1.5 rounded-full ${
+                reachable === null ? "bg-muted-foreground" : isReachable ? "bg-status-green" : "bg-status-red"
+              }`}
             />
-            {reachable ? "Reachable" : "Unreachable"}
+            {reachable === null ? "Checking…" : isReachable ? "Reachable" : "Unreachable"}
           </span>
         </div>
 
         <a
-          href={backupAgent.dashboardUrl}
+          href={dashboardUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center justify-center gap-1.5 rounded-xl border border-white/[0.07] bg-white/[0.04] py-2 text-xs font-medium text-foreground/80 transition-colors hover:bg-white/[0.08]"

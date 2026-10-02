@@ -17,8 +17,10 @@ import type {
   CloudflareTunnelStatus,
 } from "@/lib/shared/contracts/cloudflare-tunnel";
 import type { BackupAgentConfig, BackupAgentStatus } from "@/lib/shared/contracts/backup-agent";
+import { resolveBackupAgentDashboardUrl } from "@/lib/shared/backup-agent-url";
 import { cn } from "@/lib/utils";
 import { Check, Eye, EyeOff, ExternalLink } from "@/components/icons/platform-icons";
+import { useUrlReachability } from "@/modules/system/hooks/useUrlReachability";
 
 async function fetchGoogleOAuthConfig(): Promise<GoogleOAuthConfigPublic> {
   const res = await fetch("/api/v1/settings/google-oauth", { cache: "no-store" });
@@ -1064,6 +1066,7 @@ async function fetchBackupAgentConfig(): Promise<BackupAgentConfig> {
 async function saveBackupAgentConfigRequest(payload: {
   enabled: boolean;
   url: string;
+  port?: number;
   configPath: string;
 }): Promise<BackupAgentConfig> {
   const res = await fetch("/api/v1/settings/backup-agent", {
@@ -1083,6 +1086,8 @@ async function fetchBackupAgentStatus(): Promise<BackupAgentStatus> {
   return json.data!;
 }
 
+type BackupAgentUrlMode = "url" | "port";
+
 function BackupAgentConfigSection() {
   const queryClient = useQueryClient();
   const { data: saved, isLoading } = useQuery({
@@ -1092,7 +1097,7 @@ function BackupAgentConfigSection() {
 
   const enabled = Boolean(saved?.enabled);
 
-  const { data: status, isLoading: isStatusLoading } = useQuery({
+  const { data: status } = useQuery({
     queryKey: queryKeys.backupAgentStatus,
     queryFn: fetchBackupAgentStatus,
     enabled,
@@ -1100,11 +1105,19 @@ function BackupAgentConfigSection() {
   });
 
   const [url, setUrl] = useState("");
+  const [port, setPort] = useState("");
   const [configPath, setConfigPath] = useState("");
+  const [modeOverride, setModeOverride] = useState<BackupAgentUrlMode | null>(null);
   const [savedOk, setSavedOk] = useState(false);
 
+  const savedMode: BackupAgentUrlMode = saved?.port ? "port" : "url";
+  const mode = modeOverride ?? savedMode;
   const effectiveUrl = url.trim() || saved?.url || "";
+  const effectivePort = port.trim() || (saved?.port ? String(saved.port) : "");
   const effectiveConfigPath = configPath.trim() || saved?.configPath || "";
+
+  const dashboardUrl = status ? resolveBackupAgentDashboardUrl(status) : null;
+  const reachable = useUrlReachability(enabled ? dashboardUrl : null);
 
   function invalidateConfig() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.backupAgentConfig });
@@ -1121,11 +1134,35 @@ function BackupAgentConfigSection() {
   });
 
   const isBusy = isLoading || configMutation.isPending;
+
+  function save(
+    nextMode: BackupAgentUrlMode,
+    overrides: { enabled?: boolean; url?: string; port?: string; configPath?: string } = {},
+  ) {
+    const nextEnabled = overrides.enabled ?? true;
+    const nextUrl = overrides.url ?? effectiveUrl;
+    const nextPortRaw = overrides.port ?? effectivePort;
+    const nextConfigPath = overrides.configPath ?? effectiveConfigPath;
+    const parsedPort = nextPortRaw.trim() ? Number.parseInt(nextPortRaw, 10) : undefined;
+
+    configMutation.mutate({
+      enabled: nextEnabled,
+      url: nextMode === "url" ? nextUrl : "",
+      port: nextMode === "port" ? parsedPort : undefined,
+      configPath: nextConfigPath,
+    });
+  }
+
+  function selectMode(nextMode: BackupAgentUrlMode) {
+    setModeOverride(nextMode);
+    save(nextMode);
+  }
+
   const connectorLabel = !enabled
     ? "Disabled"
-    : isStatusLoading
+    : reachable === null
       ? "Checking"
-      : status?.reachable
+      : reachable
         ? "Reachable"
         : "Unreachable";
 
@@ -1159,13 +1196,7 @@ function BackupAgentConfigSection() {
               aria-label="Enable homelab-backup integration"
               checked={enabled}
               disabled={isBusy}
-              onChange={(event) =>
-                configMutation.mutate({
-                  enabled: event.target.checked,
-                  url: effectiveUrl,
-                  configPath: effectiveConfigPath,
-                })
-              }
+              onChange={(event) => save(mode, { enabled: event.target.checked })}
               className="size-3.5 accent-primary disabled:opacity-40"
             />
             {enabled ? "Enabled" : "Disabled"}
@@ -1175,27 +1206,86 @@ function BackupAgentConfigSection() {
         {enabled && (
           <>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[11px] text-muted-foreground/70" htmlFor="backup-agent-url">
-                Dashboard URL
-              </label>
-              <input
-                id="backup-agent-url"
-                aria-label="homelab-backup dashboard URL"
-                value={url || saved?.url || ""}
-                onChange={(event) => setUrl(event.target.value)}
-                onBlur={() => {
-                  const next = url.trim();
-                  if (next === (saved?.url ?? "")) return;
-                  configMutation.mutate({ enabled: true, url: next, configPath: effectiveConfigPath });
-                }}
-                placeholder="http://127.0.0.1:3095"
-                disabled={isBusy}
-                className="h-8 rounded-lg border border-glass-border bg-background/55 px-2.5 text-xs text-foreground"
-              />
-              <p className="text-[11px] text-muted-foreground/60">
-                Leave blank to use its own default port.
-              </p>
+              <span className="text-[11px] text-muted-foreground/70">How to reach its dashboard</span>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => selectMode("url")}
+                  disabled={isBusy}
+                  className={cn(
+                    "h-7 flex-1 rounded-lg border px-2 text-[11px] font-medium transition-colors disabled:opacity-40",
+                    mode === "url"
+                      ? "border-primary/40 bg-primary/15 text-foreground"
+                      : "border-glass-border bg-background/55 text-muted-foreground",
+                  )}
+                >
+                  Fixed URL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectMode("port")}
+                  disabled={isBusy}
+                  className={cn(
+                    "h-7 flex-1 rounded-lg border px-2 text-[11px] font-medium transition-colors disabled:opacity-40",
+                    mode === "port"
+                      ? "border-primary/40 bg-primary/15 text-foreground"
+                      : "border-glass-border bg-background/55 text-muted-foreground",
+                  )}
+                >
+                  Relative port
+                </button>
+              </div>
             </div>
+
+            {mode === "url" ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] text-muted-foreground/70" htmlFor="backup-agent-url">
+                  Dashboard URL
+                </label>
+                <input
+                  id="backup-agent-url"
+                  aria-label="homelab-backup dashboard URL"
+                  value={url || saved?.url || ""}
+                  onChange={(event) => setUrl(event.target.value)}
+                  onBlur={() => {
+                    const next = url.trim();
+                    if (next === (saved?.url ?? "")) return;
+                    save("url", { url: next });
+                  }}
+                  placeholder="http://127.0.0.1:3095"
+                  disabled={isBusy}
+                  className="h-8 rounded-lg border border-glass-border bg-background/55 px-2.5 text-xs text-foreground"
+                />
+                <p className="text-[11px] text-muted-foreground/60">
+                  Leave blank to use its own default port on this host.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] text-muted-foreground/70" htmlFor="backup-agent-port">
+                  Port
+                </label>
+                <input
+                  id="backup-agent-port"
+                  aria-label="homelab-backup dashboard port"
+                  inputMode="numeric"
+                  value={port || (saved?.port ? String(saved.port) : "")}
+                  onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ""))}
+                  onBlur={() => {
+                    const next = port.trim();
+                    if (next === (saved?.port ? String(saved.port) : "")) return;
+                    save("port", { port: next });
+                  }}
+                  placeholder="3095"
+                  disabled={isBusy}
+                  className="h-8 w-28 rounded-lg border border-glass-border bg-background/55 px-2.5 text-xs text-foreground"
+                />
+                <p className="text-[11px] text-muted-foreground/60">
+                  Opens on whatever host you&apos;re viewing Homeio from right now — the right
+                  choice over Tailscale, a tunnel, or a LAN IP, where a fixed URL would be wrong.
+                </p>
+              </div>
+            )}
 
             <div className="flex flex-col gap-1.5">
               <label className="text-[11px] text-muted-foreground/70" htmlFor="backup-agent-config-path">
@@ -1209,7 +1299,7 @@ function BackupAgentConfigSection() {
                 onBlur={() => {
                   const next = configPath.trim();
                   if (next === (saved?.configPath ?? "")) return;
-                  configMutation.mutate({ enabled: true, url: effectiveUrl, configPath: next });
+                  save(mode, { configPath: next });
                 }}
                 placeholder="Auto-detected under QUADLET_SERVICES_ROOT/homelab-backup/backup-services.yaml"
                 disabled={isBusy}
@@ -1221,9 +1311,9 @@ function BackupAgentConfigSection() {
               <div className="text-[11px] text-muted-foreground/70">
                 Status: <span className="text-foreground">{connectorLabel}</span>
               </div>
-              {status?.dashboardUrl && (
+              {dashboardUrl && (
                 <a
-                  href={status.dashboardUrl}
+                  href={dashboardUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 text-[11px] text-primary hover:underline"
