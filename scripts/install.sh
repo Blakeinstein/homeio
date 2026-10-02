@@ -664,7 +664,8 @@ EOF
 
 	systemctl daemon-reload
 	systemctl enable "${UPLOAD_SERVICE_NAME}.service"
-	systemctl start "${UPLOAD_SERVICE_NAME}.service"
+	# `restart`, not `start` -- see the same note in install_systemd_service().
+	systemctl restart "${UPLOAD_SERVICE_NAME}.service"
 
 	sleep 1
 
@@ -996,7 +997,11 @@ EOF
 
 	systemctl daemon-reload
 	systemctl enable "${SERVICE_NAME}.service"
-	systemctl start "${SERVICE_NAME}.service"
+	# `restart`, not `start`: a re-run of this installer (e.g. re-syncing an
+	# existing checkout) rebuilds the app on disk but `start` is a no-op on an
+	# already-active unit, leaving the old process serving the new build's
+	# static assets under a stale in-memory manifest.
+	systemctl restart "${SERVICE_NAME}.service"
 
 	# Wait a moment for service to start
 	sleep 2
@@ -1293,6 +1298,9 @@ EOF
 
 	systemctl daemon-reload
 	systemctl enable --now "${DBUS_SERVICE_NAME}.service"
+	# `enable --now` only starts it if not already active -- restart so a
+	# re-run of this installer actually picks up a changed dbus-helper build.
+	systemctl restart "${DBUS_SERVICE_NAME}.service"
 }
 
 print_summary() {
@@ -1378,7 +1386,12 @@ redirect_to_update_if_installed() {
 	echo ""
 
 	resolve_repo_ref
-	local update_url="https://raw.githubusercontent.com/doctor-io/homeio/${REPO_BRANCH}/scripts/update.sh"
+	# Derive the raw.githubusercontent.com path from REPO_URL (which honors
+	# HOMEIO_REPO_URL) instead of hardcoding the upstream repo -- otherwise
+	# installing from a fork always redirects back to upstream's update.sh.
+	local repo_path
+	repo_path="$(echo "${REPO_URL}" | sed -E 's#^https://github\.com/##; s#\.git$##')"
+	local update_url="https://raw.githubusercontent.com/${repo_path}/${REPO_BRANCH}/scripts/update.sh"
 	local tmp_update
 	tmp_update="$(mktemp /tmp/homeio-update-XXXXXX.sh)"
 
@@ -1390,8 +1403,8 @@ redirect_to_update_if_installed() {
 	fi
 
 	chmod +x "${tmp_update}"
-	# Pass REPO_BRANCH so update.sh installs the same release or branch as this installer.
-	HOMEIO_REPO_BRANCH="${REPO_BRANCH}" exec bash "${tmp_update}"
+	# Pass REPO_URL/REPO_BRANCH so update.sh stays on the same fork/branch as this installer.
+	HOMEIO_REPO_URL="${REPO_URL}" HOMEIO_REPO_BRANCH="${REPO_BRANCH}" exec bash "${tmp_update}"
 }
 
 main() {
