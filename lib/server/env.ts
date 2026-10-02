@@ -90,6 +90,10 @@ const envSchema = z.object({
   // above and are otherwise invisible to Homeio. Point this at that user's
   // socket (e.g. /run/user/<uid>/podman/podman.sock) to surface them too.
   PODMAN_ROOTLESS_SOCKET_PATH: z.string().optional(),
+  // Folder of Podman quadlet services (one subfolder per service, each with
+  // one or more `*.container` unit files and an optional app.yaml). Homeio
+  // scans it to show these as named, iconed apps instead of raw containers.
+  QUADLET_SERVICES_ROOT: z.string().optional(),
   DOCKER_COMPOSE_TIMEOUT_MS: z.coerce
     .number()
     .int()

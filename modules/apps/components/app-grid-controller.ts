@@ -3,6 +3,7 @@
 import {
   buildActiveAppOperations,
   buildAppItems,
+  buildQuadletAppItems,
   buildUnmanagedAppItems,
   requireAppActionTarget,
   resolveAppActionTarget,
@@ -13,6 +14,7 @@ import {
 import { useInstalledApps } from "@/modules/apps/hooks/useInstalledApps";
 import { useSharedStoreActions } from "@/modules/apps/hooks/StoreActionsContext";
 import { useStoreCatalog } from "@/modules/apps/hooks/useStoreCatalog";
+import { useQuadletApps } from "@/modules/apps/hooks/useQuadletApps";
 import { useUnmanagedContainers } from "@/modules/apps/hooks/useUnmanagedContainers";
 import { useEffect, useMemo, useState } from "react";
 import { isStoreOperationActiveStatus } from "@/lib/shared/store-operations";
@@ -47,6 +49,7 @@ export function useAppGridController({
 }: UseAppGridControllerOptions) {
   const installedAppsQuery = useInstalledApps();
   const unmanagedContainersQuery = useUnmanagedContainers();
+  const quadletAppsQuery = useQuadletApps();
   const installedCatalogQuery = useStoreCatalog({
     installedOnly: true,
   });
@@ -85,6 +88,10 @@ export function useAppGridController({
     () => unmanagedContainersQuery.data ?? [],
     [unmanagedContainersQuery.data],
   );
+  const quadletApps = useMemo(
+    () => quadletAppsQuery.data ?? [],
+    [quadletAppsQuery.data],
+  );
 
   const apps = useMemo(
     () => [
@@ -94,7 +101,9 @@ export function useAppGridController({
         operationsByApp,
         statusByAppId,
       }),
-      // Appended, so Homeio's own apps keep the front of the grid.
+      // Appended, so Homeio's own apps keep the front of the grid: named
+      // quadlet discoveries next, then the leftover raw containers.
+      ...buildQuadletAppItems(quadletApps),
       ...buildUnmanagedAppItems(unmanagedContainers),
     ],
     [
@@ -102,6 +111,7 @@ export function useAppGridController({
       installedCatalogApps,
       operationsByApp,
       statusByAppId,
+      quadletApps,
       unmanagedContainers,
     ],
   );

@@ -40,6 +40,7 @@ A self-hosted server manager with a desktop-style UI. Alternative to CasaOS, Umb
 - Local folder sharing over Samba and SMB network mount/unmount
 - Terminal with command allowlist (ls, cat, docker, df, ping, and more)
 - Docker container stats in real time, including containers Homeio did not deploy
+- Podman quadlet discovery: point `QUADLET_SERVICES_ROOT` at a folder of quadlet services and Homeio shows each one on the dashboard with its own name, icon, and port, resolved to its running containers
 - Network manager: WiFi and Ethernet via NetworkManager
 - Weather widget with location-based conditions
 - PostgreSQL-backed persistence
@@ -85,6 +86,18 @@ Podman is supported as an alternative to Docker — pass `HOMEIO_CONTAINER_RUNTI
 ```bash
 curl -fsSL https://raw.githubusercontent.com/doctor-io/homeio/main/scripts/install.sh -o install.sh
 sudo HOMEIO_CONTAINER_RUNTIME=podman bash install.sh
+```
+
+If you manage services as Podman quadlets (one folder per service, each holding `*.container` unit files), set `QUADLET_SERVICES_ROOT` to that folder and Homeio will list each one on the dashboard. Drop an `app.yaml` next to a service's unit files to control how it's displayed:
+
+```yaml
+# /path/to/services/sure/app.yaml
+name: Sure                 # optional, defaults to the folder name
+icon: icon.png              # optional: a URL, or a path relative to this folder
+description: Personal finance app  # optional
+category: Finance           # optional
+port: 3064                  # optional: overrides the auto-detected published port
+primaryContainer: sure-web  # optional: which unit's container represents the app (for multi-container services)
 ```
 
 **Update:**

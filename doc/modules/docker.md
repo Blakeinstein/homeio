@@ -20,6 +20,9 @@ Docker integration parses Compose content, materializes stacks, runs Docker Comp
 | `lib/server/modules/docker/stats.ts` | Docker stats collection |
 | `lib/server/modules/docker/maintenance-service.ts` | Image and volume prune |
 | `lib/server/modules/docker/app-data-ownership.ts` | App data ownership helpers |
+| `lib/server/modules/docker/unmanaged-containers.ts` | Containers Homeio didn't deploy, for read-only display |
+| `lib/server/modules/docker/quadlet-discovery.ts` | Scans `QUADLET_SERVICES_ROOT` for Podman quadlet service folders and their `app.yaml` metadata |
+| `lib/server/modules/docker/quadlet-apps.ts` | Resolves discovered quadlet services against live containers |
 
 ## Public API
 
@@ -31,6 +34,7 @@ Docker integration parses Compose content, materializes stacks, runs Docker Comp
 ## Contracts
 
 - `lib/shared/contracts/docker.ts`
+- `lib/shared/contracts/quadlet.ts`
 
 ## Database Tables
 
@@ -44,6 +48,9 @@ Docker itself is not persisted directly. Docker-backed app state is in:
 - `GET /api/v1/docker/info`
 - `GET /api/v1/docker/stats`
 - `GET /api/v1/docker/stats/stream`
+- `GET /api/v1/docker/containers`
+- `GET /api/v1/docker/quadlet-apps`
+- `GET /api/v1/docker/quadlet-apps/[id]/icon`
 - `POST /api/v1/docker/prune/images`
 - `POST /api/v1/docker/prune/volumes`
 
