@@ -1341,7 +1341,21 @@ export async function getComposeRuntimeInfo(input: {
       primaryContainerName,
       condition,
     };
-  } catch {
+  } catch (error) {
+    // Silently swallowing this previously meant a compose-ps failure for any
+    // reason (timeout, socket hiccup, a compose provider whose `ps --format
+    // json` output the parser above doesn't recognize) showed up as
+    // "unknown" in the UI with zero trace anywhere -- log it so that's
+    // diagnosable instead of a dead end.
+    logServerAction({
+      level: "warn",
+      layer: "service",
+      action: "docker.compose.runtime-info",
+      status: "error",
+      message: `Failed to read compose runtime status for stack "${input.stackName}"`,
+      error,
+    });
+
     return {
       status: "unknown",
       lifecycleStatus: "unknown",
