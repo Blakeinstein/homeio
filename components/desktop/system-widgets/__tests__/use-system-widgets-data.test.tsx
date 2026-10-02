@@ -7,6 +7,7 @@ const mockUseSystemMetrics = vi.fn();
 const mockUseInstalledApps = vi.fn();
 const mockUseCurrentWeather = vi.fn();
 const mockUseCurrentUser = vi.fn();
+const mockUseBackupAgentStatus = vi.fn();
 
 vi.mock("@/modules/system/hooks/useSystemMetrics", () => ({
   useSystemMetrics: () => mockUseSystemMetrics(),
@@ -22,6 +23,10 @@ vi.mock("@/modules/system/hooks/useCurrentWeather", () => ({
 
 vi.mock("@/hooks/useCurrentUser", () => ({
   useCurrentUser: () => mockUseCurrentUser(),
+}));
+
+vi.mock("@/modules/system/hooks/useBackupAgentStatus", () => ({
+  useBackupAgentStatus: () => mockUseBackupAgentStatus(),
 }));
 
 import { useSystemWidgetsData } from "@/modules/system/components/system-widgets/use-system-widgets-data";
@@ -99,6 +104,7 @@ describe("useSystemWidgetsData", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseCurrentUser.mockReturnValue({ data: { isDemoMode: false } });
+    mockUseBackupAgentStatus.mockReturnValue({ data: undefined });
   });
 
   it("maps backend hooks into widget model", () => {
@@ -130,6 +136,9 @@ describe("useSystemWidgetsData", () => {
         dailyForecast: [],
       },
     });
+    mockUseBackupAgentStatus.mockReturnValue({
+      data: { enabled: true, dashboardUrl: "http://127.0.0.1:3095", reachable: true },
+    });
 
     const { result } = renderHook(() => useSystemWidgetsData());
 
@@ -152,6 +161,11 @@ describe("useSystemWidgetsData", () => {
       { label: "Networks", value: "2", sub: "nearby" },
       { label: "Weather", value: "22°", sub: "Tunis, Tunisia" },
     ]);
+    expect(result.current.backupAgent).toEqual({
+      enabled: true,
+      dashboardUrl: "http://127.0.0.1:3095",
+      reachable: true,
+    });
   });
 
   it("returns safe fallback values when backend data is missing", () => {
@@ -177,6 +191,11 @@ describe("useSystemWidgetsData", () => {
       label: "Weather",
       value: "--",
       sub: "unknown",
+    });
+    expect(result.current.backupAgent).toEqual({
+      enabled: false,
+      dashboardUrl: null,
+      reachable: null,
     });
   });
 });

@@ -41,6 +41,7 @@ A self-hosted server manager with a desktop-style UI. Alternative to CasaOS, Umb
 - Terminal with command allowlist (ls, cat, docker, df, ping, and more)
 - Docker container stats in real time, including containers Homeio did not deploy
 - Podman quadlet discovery: point `QUADLET_SERVICES_ROOT` at a folder of quadlet services and Homeio shows each one on the dashboard with its own name, icon, and port, resolved to its running containers
+- homelab-backup integration: enable it in Settings to recognize [homelab-backup](https://github.com/Blakeinstein/homelab-backup) — a backup agent running alongside Homeio as a separate systemd service — and show a Backups widget linking to its dashboard
 - Network manager: WiFi and Ethernet via NetworkManager
 - Weather widget with location-based conditions
 - PostgreSQL-backed persistence
@@ -99,6 +100,8 @@ category: Finance           # optional
 port: 3064                  # optional: overrides the auto-detected published port
 primaryContainer: sure-web  # optional: which unit's container represents the app (for multi-container services)
 ```
+
+If you also run [homelab-backup](https://github.com/Blakeinstein/homelab-backup) — a standalone backup agent that lives alongside your quadlet services but runs as its own systemd service rather than a container — turn it on in **Settings → Integrations → homelab-backup**. Enabling it shows a Backups widget linking to its dashboard. Leave the URL and config path fields blank to use the defaults (dashboard at `http://127.0.0.1:3095`, config auto-detected under `<QUADLET_SERVICES_ROOT>/homelab-backup/backup-services.yaml`), or fill them in if yours differs. `HOMELAB_BACKUP_URL` sets the same default at the environment level, for scripted deploys.
 
 **Update:**
 

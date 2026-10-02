@@ -30,9 +30,17 @@ export type QuickStatItem = {
   sub: string;
 };
 
+/** homelab-backup (a standalone agent, not a Homeio-managed container) status for the Backups widget. */
+export type BackupAgentWidgetData = {
+  enabled: boolean;
+  dashboardUrl: string | null;
+  reachable: boolean | null;
+};
+
 export type SystemWidgetsViewModel = {
   uptime: UptimeParts;
   resources: ResourceWidgetItem[];
   network: NetworkWidgetData;
   quickStats: QuickStatItem[];
+  backupAgent: BackupAgentWidgetData;
 };

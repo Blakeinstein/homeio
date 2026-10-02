@@ -94,6 +94,12 @@ const envSchema = z.object({
   // one or more `*.container` unit files and an optional app.yaml). Homeio
   // scans it to show these as named, iconed apps instead of raw containers.
   QUADLET_SERVICES_ROOT: z.string().optional(),
+  // homelab-backup (https://github.com/Blakeinstein/homelab-backup) is a
+  // standalone Go agent, not a container: it runs as its own systemd service
+  // alongside Homeio and keeps its config (backup-services.yaml) in a
+  // `homelab-backup/` folder under QUADLET_SERVICES_ROOT. Its dashboard URL
+  // can't be inferred from that folder, so it's configured separately here.
+  HOMELAB_BACKUP_URL: z.string().url().optional(),
   DOCKER_COMPOSE_TIMEOUT_MS: z.coerce
     .number()
     .int()

@@ -226,6 +226,11 @@ export const settings = pgTable("settings", {
   cloudflareApiTokenTag: text("cloudflare_api_token_tag"),
   telemetryEnabled: boolean("telemetry_enabled").notNull().default(true),
   telemetryInstanceId: text("telemetry_instance_id"),
+  // homelab-backup integration. Nullable `enabled`: null means "auto" (on
+  // when a backup-services.yaml is found), true/false is an explicit override.
+  backupAgentEnabled: boolean("backup_agent_enabled"),
+  backupAgentUrl: text("backup_agent_url"),
+  backupAgentConfigPath: text("backup_agent_config_path"),
 });
 
 export const filesGoogleDriveTokens = pgTable(

@@ -85,6 +85,13 @@
       "when": 1779451474716,
       "tag": "0012_telemetry",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790968968556,
+      "tag": "0013_backup_agent_integration",
+      "breakpoints": true
     }
   ]
 }

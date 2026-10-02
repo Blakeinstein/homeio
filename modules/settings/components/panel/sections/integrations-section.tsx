@@ -16,6 +16,7 @@ import type {
   CloudflareTunnelConfigPublic,
   CloudflareTunnelStatus,
 } from "@/lib/shared/contracts/cloudflare-tunnel";
+import type { BackupAgentConfig, BackupAgentStatus } from "@/lib/shared/contracts/backup-agent";
 import { cn } from "@/lib/utils";
 import { Check, Eye, EyeOff, ExternalLink } from "@/components/icons/platform-icons";
 
@@ -1053,6 +1054,192 @@ function CloudflareTunnelConfig() {
   );
 }
 
+async function fetchBackupAgentConfig(): Promise<BackupAgentConfig> {
+  const res = await fetch("/api/v1/settings/backup-agent", { cache: "no-store" });
+  const json = (await res.json()) as { data?: BackupAgentConfig; error?: string };
+  if (!res.ok) throw new Error(json.error ?? "Failed to fetch");
+  return json.data!;
+}
+
+async function saveBackupAgentConfigRequest(payload: {
+  enabled: boolean;
+  url: string;
+  configPath: string;
+}): Promise<BackupAgentConfig> {
+  const res = await fetch("/api/v1/settings/backup-agent", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const json = (await res.json()) as { data?: BackupAgentConfig; error?: string };
+  if (!res.ok) throw new Error(json.error ?? "Failed to save");
+  return json.data!;
+}
+
+async function fetchBackupAgentStatus(): Promise<BackupAgentStatus> {
+  const res = await fetch("/api/v1/system/backup-agent", { cache: "no-store" });
+  const json = (await res.json()) as { data?: BackupAgentStatus; error?: string };
+  if (!res.ok) throw new Error(json.error ?? "Failed to fetch status");
+  return json.data!;
+}
+
+function BackupAgentConfigSection() {
+  const queryClient = useQueryClient();
+  const { data: saved, isLoading } = useQuery({
+    queryKey: queryKeys.backupAgentConfig,
+    queryFn: fetchBackupAgentConfig,
+  });
+
+  const enabled = Boolean(saved?.enabled);
+
+  const { data: status, isLoading: isStatusLoading } = useQuery({
+    queryKey: queryKeys.backupAgentStatus,
+    queryFn: fetchBackupAgentStatus,
+    enabled,
+    refetchInterval: enabled ? 10_000 : false,
+  });
+
+  const [url, setUrl] = useState("");
+  const [configPath, setConfigPath] = useState("");
+  const [savedOk, setSavedOk] = useState(false);
+
+  const effectiveUrl = url.trim() || saved?.url || "";
+  const effectiveConfigPath = configPath.trim() || saved?.configPath || "";
+
+  function invalidateConfig() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.backupAgentConfig });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.backupAgentStatus });
+  }
+
+  const configMutation = useMutation({
+    mutationFn: saveBackupAgentConfigRequest,
+    onSuccess: () => {
+      invalidateConfig();
+      setSavedOk(true);
+      setTimeout(() => setSavedOk(false), 3000);
+    },
+  });
+
+  const isBusy = isLoading || configMutation.isPending;
+  const connectorLabel = !enabled
+    ? "Disabled"
+    : isStatusLoading
+      ? "Checking"
+      : status?.reachable
+        ? "Reachable"
+        : "Unreachable";
+
+  return (
+    <div className="flex flex-col gap-1">
+      {configMutation.error && (
+        <InfoBanner text={(configMutation.error as Error).message} variant="warning" />
+      )}
+      {savedOk && !configMutation.error && (
+        <InfoBanner text="homelab-backup settings saved." variant="info" />
+      )}
+      {enabled && status?.configFound === false && (
+        <InfoBanner
+          text={`No backup-services.yaml found at ${effectiveConfigPath || "the auto-detected location under QUADLET_SERVICES_ROOT/homelab-backup/"}. The dashboard link still works if the service itself is reachable.`}
+          variant="warning"
+        />
+      )}
+
+      <div className={cn(SETTINGS_PANEL_INSET, "flex flex-col gap-3 px-4 py-3")}>
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground">homelab-backup</div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground/70">
+              A standalone backup agent that runs as its own service, not a container Homeio
+              manages. Enable this to link to its dashboard from the desktop.
+            </div>
+          </div>
+          <label className="flex shrink-0 items-center gap-2 text-xs text-foreground">
+            <input
+              type="checkbox"
+              aria-label="Enable homelab-backup integration"
+              checked={enabled}
+              disabled={isBusy}
+              onChange={(event) =>
+                configMutation.mutate({
+                  enabled: event.target.checked,
+                  url: effectiveUrl,
+                  configPath: effectiveConfigPath,
+                })
+              }
+              className="size-3.5 accent-primary disabled:opacity-40"
+            />
+            {enabled ? "Enabled" : "Disabled"}
+          </label>
+        </div>
+
+        {enabled && (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] text-muted-foreground/70" htmlFor="backup-agent-url">
+                Dashboard URL
+              </label>
+              <input
+                id="backup-agent-url"
+                aria-label="homelab-backup dashboard URL"
+                value={url || saved?.url || ""}
+                onChange={(event) => setUrl(event.target.value)}
+                onBlur={() => {
+                  const next = url.trim();
+                  if (next === (saved?.url ?? "")) return;
+                  configMutation.mutate({ enabled: true, url: next, configPath: effectiveConfigPath });
+                }}
+                placeholder="http://127.0.0.1:3095"
+                disabled={isBusy}
+                className="h-8 rounded-lg border border-glass-border bg-background/55 px-2.5 text-xs text-foreground"
+              />
+              <p className="text-[11px] text-muted-foreground/60">
+                Leave blank to use its own default port.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] text-muted-foreground/70" htmlFor="backup-agent-config-path">
+                Config file path
+              </label>
+              <input
+                id="backup-agent-config-path"
+                aria-label="backup-services.yaml path"
+                value={configPath || saved?.configPath || ""}
+                onChange={(event) => setConfigPath(event.target.value)}
+                onBlur={() => {
+                  const next = configPath.trim();
+                  if (next === (saved?.configPath ?? "")) return;
+                  configMutation.mutate({ enabled: true, url: effectiveUrl, configPath: next });
+                }}
+                placeholder="Auto-detected under QUADLET_SERVICES_ROOT/homelab-backup/backup-services.yaml"
+                disabled={isBusy}
+                className="h-8 rounded-lg border border-glass-border bg-background/55 px-2.5 text-xs text-foreground"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-glass-border/60 pt-3">
+              <div className="text-[11px] text-muted-foreground/70">
+                Status: <span className="text-foreground">{connectorLabel}</span>
+              </div>
+              {status?.dashboardUrl && (
+                <a
+                  href={status.dashboardUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-[11px] text-primary hover:underline"
+                >
+                  Open dashboard
+                  <ExternalLink className="size-3" />
+                </a>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function IntegrationsSection() {
   return (
     <div className="flex flex-col gap-1">
@@ -1062,6 +1249,8 @@ export function IntegrationsSection() {
       <TailscaleConfig />
       <SectionDivider title="Cloudflare Tunnel" />
       <CloudflareTunnelConfig />
+      <SectionDivider title="Backups" />
+      <BackupAgentConfigSection />
     </div>
   );
 }

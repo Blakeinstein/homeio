@@ -2,6 +2,7 @@
 
 import { Cpu, MemoryStick, Thermometer } from "@/components/icons/platform-icons";
 import { useMemo } from "react";
+import { useBackupAgentStatus } from "@/modules/system/hooks/useBackupAgentStatus";
 import { useCurrentWeather } from "@/modules/system/hooks/useCurrentWeather";
 import { useInstalledApps } from "@/modules/apps/hooks/useInstalledApps";
 import { useSystemMetrics } from "@/modules/system/hooks/useSystemMetrics";
@@ -41,6 +42,7 @@ export function useSystemWidgetsData(): SystemWidgetsViewModel {
   const { data: installedApps } = useInstalledApps();
   const { data: weather } = useCurrentWeather();
   const { data: currentUser } = useCurrentUser();
+  const { data: backupAgentStatus } = useBackupAgentStatus();
   const isDemoMode = currentUser?.isDemoMode ?? false;
 
   return useMemo(() => {
@@ -113,6 +115,11 @@ export function useSystemWidgetsData(): SystemWidgetsViewModel {
         isDemoMode,
       },
       quickStats,
+      backupAgent: {
+        enabled: backupAgentStatus?.enabled ?? false,
+        dashboardUrl: backupAgentStatus?.dashboardUrl ?? null,
+        reachable: backupAgentStatus?.reachable ?? null,
+      },
     };
-  }, [installedApps, isDemoMode, metrics, weather]);
+  }, [backupAgentStatus, installedApps, isDemoMode, metrics, weather]);
 }
