@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import yaml from "js-yaml";
 import { serverEnv } from "@/lib/server/env";
 import {
   summarizeContainers,
@@ -991,6 +992,135 @@ export function normalizeComposeStorageBindings(
   };
 }
 
+export function applyDefaultRestartPolicy(composeContent: string) {
+  let document: unknown;
+  try {
+    document = yaml.load(composeContent);
+  } catch {
+    // Let the Compose provider report malformed YAML as it did before.
+    return composeContent;
+  }
+
+  if (!document || typeof document !== "object" || Array.isArray(document)) {
+    return composeContent;
+  }
+  const services = (document as { services?: unknown }).services;
+  if (!services || typeof services !== "object" || Array.isArray(services)) {
+    return composeContent;
+  }
+
+  const missingPolicies = new Set(
+    Object.entries(services)
+      .filter(([, service]) =>
+        service &&
+        typeof service === "object" &&
+        !Array.isArray(service) &&
+        !Object.prototype.hasOwnProperty.call(service, "restart"),
+      )
+      .map(([name]) => name),
+  );
+  if (missingPolicies.size === 0) return composeContent;
+
+  const lines = composeContent.split(/\r?\n/);
+  let inServices = false;
+  let servicesIndent = -1;
+  let serviceIndent: number | null = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const indent = line.length - line.trimStart().length;
+    if (!inServices) {
+      if (/^services\s*:\s*(?:#.*)?$/.test(trimmed)) {
+        inServices = true;
+        servicesIndent = indent;
+      }
+      continue;
+    }
+
+    if (indent <= servicesIndent) {
+      inServices = false;
+      serviceIndent = null;
+      index -= 1;
+      continue;
+    }
+    if (serviceIndent === null) serviceIndent = indent;
+    if (indent !== serviceIndent) continue;
+
+    const serviceHeader = trimmed.match(
+      /^(?:"([^"\n]+)"|'([^'\n]+)'|([A-Za-z0-9_.-]+)):\s*(?:#.*)?$/,
+    );
+    if (!serviceHeader) continue;
+    const serviceName = serviceHeader[1] ?? serviceHeader[2] ?? serviceHeader[3];
+    if (!serviceName || !missingPolicies.delete(serviceName)) continue;
+
+    const childIndent = " ".repeat(serviceIndent + 2);
+    lines.splice(index + 1, 0, `${childIndent}restart: unless-stopped`);
+    index += 1;
+  }
+
+  return lines.join("\n");
+}
+
+export async function ensureExistingComposeContainersRestartOnBoot(input: {
+  composePath: string;
+  stackName: string;
+}, runDockerCommand: (args: string[], cwd: string) => Promise<string> = async (args, cwd) => {
+  const { stdout } = await execFileAsync("docker", args, { cwd, timeout: 30_000 });
+  return stdout;
+}) {
+  let document: unknown;
+  try {
+    document = yaml.load(await readFile(input.composePath, "utf8"));
+  } catch {
+    return;
+  }
+  if (!document || typeof document !== "object" || Array.isArray(document)) return;
+  const services = (document as { services?: unknown }).services;
+  if (!services || typeof services !== "object" || Array.isArray(services)) return;
+
+  const serviceNames = Object.entries(services)
+    .filter(([, service]) =>
+      service &&
+      typeof service === "object" &&
+      !Array.isArray(service) &&
+      !Object.prototype.hasOwnProperty.call(service, "restart"),
+    )
+    .map(([name]) => name);
+  if (serviceNames.length === 0) return;
+
+  const composeArgs = [
+    "compose",
+    "-f",
+    input.composePath,
+    "--env-file",
+    path.join(path.dirname(input.composePath), ".env"),
+    "-p",
+    input.stackName,
+  ];
+  const cwd = path.dirname(input.composePath);
+
+  for (const serviceName of serviceNames) {
+    try {
+      const stdout = await runDockerCommand(
+        [...composeArgs, "ps", "--all", "--quiet", serviceName],
+        cwd,
+      );
+      const containerIds = stdout.trim().split(/\s+/).filter(Boolean);
+      if (containerIds.length === 0) continue;
+
+      await runDockerCommand(["update", "--restart=unless-stopped", ...containerIds], cwd);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[Compose] Could not set a reboot restart policy for ${input.stackName}/${serviceName}: ${message}`,
+      );
+    }
+  }
+}
+
 export async function materializeInlineStackFiles(input: {
   appId: string;
   stackName: string;
@@ -1011,6 +1141,7 @@ export async function materializeInlineStackFiles(input: {
     appId: input.appId,
     strategy: input.storageMappingStrategy,
   });
+  const composeWithRestartPolicy = applyDefaultRestartPolicy(normalized.composeContent);
   const ownershipOverrides = resolveComposeBindMountOwnershipOverrides(normalized.composeContent, {
     ...input.env,
     AppID: input.appId,
@@ -1031,7 +1162,7 @@ export async function materializeInlineStackFiles(input: {
     ),
   );
   await applyBindMountOwnershipOverrides(ownershipOverrides);
-  await writeFile(composePath, normalized.composeContent, "utf8");
+  await writeFile(composePath, composeWithRestartPolicy, "utf8");
   await writeFile(envPath, serializeEnvFile(input.env), "utf8");
 
   return {

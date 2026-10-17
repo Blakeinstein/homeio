@@ -10,12 +10,14 @@ NC='\033[0m'
 APP_NAME="home-server"
 APP_USER="${HOMEIO_USER:-homeio}"
 APP_GROUP="${HOMEIO_GROUP:-${APP_USER}}"
+APP_HOME="${HOMEIO_HOME_DIR:-/var/lib/homeio}"
 INSTALL_DIR="${HOMEIO_INSTALL_DIR:-/opt/home-server}"
 DATA_DIR="${HOMEIO_DATA_DIR:-/var/lib/home-server}"
 ENV_DIR="${HOMEIO_ENV_DIR:-/etc/home-server}"
 ENV_FILE="${HOMEIO_ENV_FILE:-${ENV_DIR}/home-server.env}"
 SERVICE_NAME="${HOMEIO_SERVICE_NAME:-home-server}"
 DBUS_SERVICE_NAME="${HOMEIO_DBUS_SERVICE_NAME:-home-server-dbus}"
+UPLOAD_SERVICE_NAME="${HOMEIO_UPLOAD_SERVICE_NAME:-home-server-upload}"
 NGINX_SITE_NAME="${HOMEIO_NGINX_SITE_NAME:-home-server}"
 
 PURGE="false"
@@ -30,6 +32,11 @@ fi
 DBUS_SERVICE_UNIT="${DBUS_SERVICE_NAME}"
 if [[ "${DBUS_SERVICE_UNIT}" != *.service ]]; then
 	DBUS_SERVICE_UNIT="${DBUS_SERVICE_UNIT}.service"
+fi
+
+UPLOAD_SERVICE_UNIT="${UPLOAD_SERVICE_NAME}"
+if [[ "${UPLOAD_SERVICE_UNIT}" != *.service ]]; then
+	UPLOAD_SERVICE_UNIT="${UPLOAD_SERVICE_UNIT}.service"
 fi
 
 print_status() { echo -e "${GREEN}[+]${NC} $1"; }
@@ -127,6 +134,9 @@ stop_and_remove_service() {
 		print_status "Stopping and disabling ${DBUS_SERVICE_UNIT}..."
 		systemctl stop "${DBUS_SERVICE_UNIT}" >/dev/null 2>&1 || true
 		systemctl disable "${DBUS_SERVICE_UNIT}" >/dev/null 2>&1 || true
+		print_status "Stopping and disabling ${UPLOAD_SERVICE_UNIT}..."
+		systemctl stop "${UPLOAD_SERVICE_UNIT}" >/dev/null 2>&1 || true
+		systemctl disable "${UPLOAD_SERVICE_UNIT}" >/dev/null 2>&1 || true
 	fi
 
 	local unit_file="/etc/systemd/system/${SERVICE_UNIT}"
@@ -138,6 +148,12 @@ stop_and_remove_service() {
 	if [[ -f "${dbus_unit_file}" ]]; then
 		rm -f "${dbus_unit_file}"
 	fi
+	local upload_unit_file="/etc/systemd/system/${UPLOAD_SERVICE_UNIT}"
+	if [[ -f "${upload_unit_file}" ]]; then
+		rm -f "${upload_unit_file}"
+	fi
+	rm -f "/etc/systemd/system/${SERVICE_UNIT}.d/20-runtime-user.conf"
+	rm -f "/etc/systemd/system/${DBUS_SERVICE_UNIT}.d/20-homeio-group.conf"
 
 	if command_exists systemctl; then
 		systemctl daemon-reload
@@ -242,12 +258,19 @@ remove_system_user_group() {
 
 	if id -u "${APP_USER}" >/dev/null 2>&1; then
 		print_status "Removing system user ${APP_USER}..."
-		userdel "${APP_USER}" >/dev/null 2>&1 || true
+		loginctl disable-linger "${APP_USER}" >/dev/null 2>&1 || true
+		userdel --remove-home "${APP_USER}" >/dev/null 2>&1 || true
 	fi
 
 	if getent group "${APP_GROUP}" >/dev/null 2>&1; then
 		print_status "Removing system group ${APP_GROUP}..."
 		groupdel "${APP_GROUP}" >/dev/null 2>&1 || true
+	fi
+	if [[ -f /etc/systemd/system/podman.socket.d/10-homeio.conf ]]; then
+		rm -f /etc/systemd/system/podman.socket.d/10-homeio.conf
+		rmdir /etc/systemd/system/podman.socket.d >/dev/null 2>&1 || true
+		systemctl daemon-reload
+		systemctl restart podman.socket >/dev/null 2>&1 || true
 	fi
 }
 

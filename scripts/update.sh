@@ -10,6 +10,9 @@ NC='\033[0m'
 APP_NAME="home-server"
 INSTALL_DIR="${HOMEIO_INSTALL_DIR:-/opt/home-server}"
 ENV_FILE="${HOMEIO_ENV_FILE:-${INSTALL_DIR}/.env}"
+APP_USER="homeio"
+APP_GROUP="homeio"
+APP_HOME="/var/lib/homeio"
 SERVICE_NAME="${HOMEIO_SERVICE_NAME:-home-server}"
 DBUS_SERVICE_NAME="${HOMEIO_DBUS_SERVICE_NAME:-home-server-dbus}"
 UPLOAD_SERVICE_NAME="${HOMEIO_UPLOAD_SERVICE_NAME:-home-server-upload}"
@@ -117,6 +120,78 @@ check_prerequisites() {
 
 	[[ -d "${INSTALL_DIR}" ]] || { print_error "Install directory not found: ${INSTALL_DIR}"; exit 1; }
 	[[ -f "${ENV_FILE}" ]] || { print_error "Environment file not found: ${ENV_FILE}"; exit 1; }
+}
+
+ensure_homeio_runtime_user() {
+	if ! getent group "${APP_GROUP}" >/dev/null 2>&1; then
+		groupadd --system "${APP_GROUP}"
+	fi
+	if ! id -u "${APP_USER}" >/dev/null 2>&1; then
+		useradd --system --gid "${APP_GROUP}" --home-dir "${APP_HOME}" --create-home \
+			--shell /usr/sbin/nologin "${APP_USER}"
+	else
+		usermod --gid "${APP_GROUP}" --home "${APP_HOME}" --shell /usr/sbin/nologin "${APP_USER}"
+		mkdir -p "${APP_HOME}"
+	fi
+	chown "${APP_USER}:${APP_GROUP}" "${APP_HOME}"
+	chmod 0750 "${APP_HOME}"
+	command_exists loginctl && loginctl enable-linger "${APP_USER}"
+
+	local docker_socket_path
+	docker_socket_path="$(sed -n 's/^DOCKER_SOCKET_PATH=//p' "${ENV_FILE}" | head -n 1 | tr -d "\"'")"
+	local runtime_environment=""
+	if [[ "${docker_socket_path}" == "/run/podman/podman.sock" ]]; then
+		runtime_environment=$'Environment=DOCKER_HOST=unix:///run/podman/podman.sock\nEnvironment=CONTAINER_HOST=unix:///run/podman/podman.sock'
+		local dropin_dir="/etc/systemd/system/podman.socket.d"
+		mkdir -p "${dropin_dir}"
+		cat >"${dropin_dir}/10-homeio.conf" <<EOF
+[Socket]
+SocketGroup=${APP_GROUP}
+SocketMode=0660
+EOF
+		systemctl daemon-reload
+		systemctl restart podman.socket
+		if systemctl cat podman-restart.service >/dev/null 2>&1; then
+			systemctl enable podman-restart.service
+		fi
+	elif getent group docker >/dev/null 2>&1; then
+		usermod -aG docker "${APP_USER}"
+	fi
+
+	local unit_name="${SERVICE_UNIT%.service}"
+	local dropin_dir="/etc/systemd/system/${unit_name}.service.d"
+	mkdir -p "${dropin_dir}"
+	cat >"${dropin_dir}/20-runtime-user.conf" <<EOF
+[Service]
+User=${APP_USER}
+Group=${APP_GROUP}
+Environment=HOME=${APP_HOME}
+${runtime_environment}
+EOF
+	if systemctl cat "${DBUS_SERVICE_UNIT}" >/dev/null 2>&1; then
+		local dbus_unit_name="${DBUS_SERVICE_UNIT%.service}"
+		local dbus_dropin_dir="/etc/systemd/system/${dbus_unit_name}.service.d"
+		mkdir -p "${dbus_dropin_dir}"
+		cat >"${dbus_dropin_dir}/20-homeio-group.conf" <<EOF
+[Service]
+Group=${APP_GROUP}
+Environment=HOMEIO_GROUP=${APP_GROUP}
+EOF
+	fi
+	systemctl daemon-reload
+}
+
+apply_homeio_ownership() {
+	mkdir -p "${APP_HOME}/logs" /var/lib/home-server/stacks
+	chown -R "${APP_USER}:${APP_GROUP}" "${INSTALL_DIR}" /var/lib/home-server "${APP_HOME}"
+	if [[ -f "${ENV_FILE}" ]]; then
+		chown "${APP_USER}:${APP_GROUP}" "${ENV_FILE}"
+		chmod 0600 "${ENV_FILE}"
+	fi
+	for data_dir in AppData Documents Media Download .Shared .Network .Trash; do
+		mkdir -p "/DATA/${data_dir}"
+		chown "${APP_USER}:${APP_GROUP}" "/DATA/${data_dir}"
+	done
 }
 
 # Debian 12+ no longer ships rsyslog, so /var/log/auth.log does not exist and
@@ -314,14 +389,17 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=${APP_USER}
+Group=${APP_GROUP}
 EnvironmentFile=${ENV_FILE}
+Environment=HOME=${APP_HOME}
 Environment=UPLOAD_SERVER_ADDR=/run/home-server-upload/upload.sock
 # A directory of its own: the DBus helper owns /run/home-server (mode 0770), and
 # sharing it meant whichever service started last set its mode, and stopping
 # either one deleted the other's socket, leaving nginx unable to reach uploads.
 RuntimeDirectory=home-server-upload
 RuntimeDirectoryMode=0755
+UMask=0007
 ExecStart=${INSTALL_DIR}/bin/upload-server
 Restart=always
 RestartSec=5
@@ -746,6 +824,7 @@ rollback_release() {
 	cd "${INSTALL_DIR}" && npm ci --no-audit --no-fund
 	cd "${INSTALL_DIR}" && npm run build
 	build_upload_server || true
+	apply_homeio_ownership
 	start_service
 	restart_upload_server_service || true
 
@@ -819,6 +898,7 @@ print_summary() {
 main() {
 	require_root
 	check_prerequisites
+	ensure_homeio_runtime_user
 	# Before the rollback trap is armed: a GitHub hiccup only means main is used.
 	resolve_repo_ref
 	capture_current_state
@@ -839,6 +919,7 @@ main() {
 	run_database_migrations
 	build_app
 	build_upload_server
+	apply_homeio_ownership
 	start_service
 	configure_reverse_proxy
 	restart_dbus_helper_service

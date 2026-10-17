@@ -82,6 +82,10 @@ curl -fsSL https://raw.githubusercontent.com/doctor-io/homeio/main/scripts/insta
 
 The app listens on `127.0.0.1:12026` and is exposed on `:80` via Nginx.
 
+The host install runs the Homeio and upload services as the non-login system user `homeio`. The account is linger-enabled so its user systemd manager is available at boot; the system service itself is enabled for `multi-user.target`. Homeio keeps access to the selected container runtime. Compose services without an explicit restart policy default to `unless-stopped`; Homeio also applies that policy to already-installed services on startup, so they return after a reboot unless they were explicitly configured otherwise.
+
+Homeio's Docker or rootful Podman socket access is highly privileged. Host-management actions that directly require root (for example disk mounts, firewall/system settings, and OS updates) may not work from the UI; use the corresponding command or update script from an administrator shell.
+
 Podman is supported as an alternative to Docker — pass `HOMEIO_CONTAINER_RUNTIME=podman`, or leave it unset to auto-detect (Podman is used automatically when it's already installed and Docker isn't):
 
 ```bash
