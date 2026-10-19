@@ -290,11 +290,45 @@ async function discoverQuadletService(dirPath: string, dirName: string): Promise
   };
 }
 
+async function discoverFlatQuadletUnit(root: string, fileName: string): Promise<DiscoveredQuadletService | null> {
+  const unitBaseName = fileName.slice(0, -CONTAINER_UNIT_EXTENSION.length);
+  try {
+    const content = await readFile(path.join(root, fileName), "utf8");
+    const info = extractQuadletContainerInfo(unitBaseName, content);
+    const id = slugifyDirName(unitBaseName);
+    return {
+      id,
+      dirName: unitBaseName,
+      sourceDir: root,
+      name: titleCaseFromSlug(id),
+      description: null,
+      category: null,
+      icon: null,
+      webUiPort: info.publishPorts[0] ?? null,
+      containers: [{
+        containerName: info.containerName,
+        image: info.image,
+        publishPorts: info.publishPorts,
+      }],
+      primaryContainerName: info.containerName,
+    };
+  } catch (error) {
+    logServerAction({
+      level: "warn",
+      layer: "service",
+      action: "docker.quadlet.discoverService",
+      status: "error",
+      message: `Could not read quadlet unit ${path.join(root, fileName)}`,
+      error,
+    });
+    return null;
+  }
+}
+
 /**
- * Scans the immediate subdirectories of `root` for Podman quadlet services: a
- * folder with one or more `*.container` unit files, and optionally an
- * `app.yaml`/`app.yml` describing how to present it. A folder with no
- * `.container` files is not a quadlet service and is skipped.
+ * Scans the immediate subdirectories of `root` for grouped Podman quadlet
+ * services, and also accepts flat `*.container` files from the standard
+ * systemd Quadlet directory. Grouped folders can include app.yaml metadata.
  */
 export async function discoverQuadletServices(root: string): Promise<DiscoveredQuadletService[]> {
   let entries;
@@ -313,11 +347,15 @@ export async function discoverQuadletServices(root: string): Promise<DiscoveredQ
   }
 
   const directories = entries.filter((entry) => entry.isDirectory());
-  const services = await Promise.all(
-    directories.map((entry) => discoverQuadletService(path.join(root, entry.name), entry.name)),
-  );
+  const unitFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(CONTAINER_UNIT_EXTENSION));
+  const services = await Promise.all([
+    ...directories.map((entry) => discoverQuadletService(path.join(root, entry.name), entry.name)),
+    ...unitFiles.map((entry) => discoverFlatQuadletUnit(root, entry.name)),
+  ]);
 
-  return services.filter((service): service is DiscoveredQuadletService => service !== null);
+  return services
+    .filter((service): service is DiscoveredQuadletService => service !== null)
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 /**

@@ -44,6 +44,7 @@ HOMEIO_CONTAINER_RUNTIME="${HOMEIO_CONTAINER_RUNTIME:-}"   # empty = auto-detect
 
 EFFECTIVE_DB_USER=""
 EFFECTIVE_CONTAINER_RUNTIME=""
+ROOTLESS_PODMAN_SOCKET_PATH=""
 
 print_status() { echo -e "${GREEN}[+]${NC} $1"; }
 print_error() { echo -e "${RED}[!]${NC} $1" >&2; }
@@ -553,6 +554,7 @@ install_podman() {
 	if systemctl cat podman-restart.service >/dev/null 2>&1; then
 		systemctl enable podman-restart.service
 	fi
+	configure_homeio_rootless_podman
 }
 
 configure_podman_socket_access() {
@@ -565,6 +567,38 @@ SocketMode=0660
 EOF
 	systemctl daemon-reload
 	systemctl restart podman.socket
+}
+
+configure_homeio_rootless_podman() {
+	local uid runtime_dir socket_path
+	mkdir -p "${APP_HOME}/.config/containers/systemd"
+	chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}/.config"
+	uid="$(id -u "${APP_USER}")"
+	runtime_dir="/run/user/${uid}"
+	socket_path="${runtime_dir}/podman/podman.sock"
+	ROOTLESS_PODMAN_SOCKET_PATH="${socket_path}"
+
+	command_exists loginctl && loginctl enable-linger "${APP_USER}"
+	if ! systemctl start "user@${uid}.service" >/dev/null 2>&1; then
+		print_warn "Could not start ${APP_USER}'s systemd user manager; rootless Podman/Quadlet discovery will need manual setup."
+		return 0
+	fi
+
+	if ! runuser -u "${APP_USER}" -- env \
+		HOME="${APP_HOME}" \
+		XDG_RUNTIME_DIR="${runtime_dir}" \
+		DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus" \
+		systemctl --user enable --now podman.socket >/dev/null 2>&1; then
+		print_warn "Could not enable ${APP_USER}'s rootless Podman socket; Quadlets will need manual setup."
+		return 0
+	fi
+
+	if [[ ! -S "${socket_path}" ]]; then
+		print_warn "Rootless Podman socket was not created at ${socket_path}."
+		return 0
+	fi
+
+	print_status "Enabled ${APP_USER}'s rootless Podman socket at ${socket_path}."
 }
 
 install_container_runtime() {
@@ -863,10 +897,14 @@ create_env_file() {
 	local db_name="${HOMEIO_DB_NAME:-home_server}"
 	local database_url="postgresql://${db_user}:${db_password}@127.0.0.1:5432/${db_name}"
 
-	# Podman's Docker-compat API socket; Docker keeps env.ts's own default.
+	# Rootful Podman compatibility API socket; the rootless Homeio user socket is
+	# configured separately so Homeio can also discover its Quadlet containers.
 	local docker_socket_line=""
 	if [[ "${EFFECTIVE_CONTAINER_RUNTIME}" == "podman" ]]; then
-		docker_socket_line=$'DOCKER_SOCKET_PATH=/run/podman/podman.sock\nDOCKER_HOST=unix:///run/podman/podman.sock\nCONTAINER_HOST=unix:///run/podman/podman.sock'
+		docker_socket_line=$'DOCKER_SOCKET_PATH=/run/podman/podman.sock\nDOCKER_HOST=unix:///run/podman/podman.sock\nCONTAINER_HOST=unix:///run/podman/podman.sock\nQUADLET_SERVICES_ROOT='"${APP_HOME}"'/.config/containers/systemd'
+		if [[ -n "${ROOTLESS_PODMAN_SOCKET_PATH}" ]]; then
+			docker_socket_line+=$'\nPODMAN_ROOTLESS_SOCKET_PATH='"${ROOTLESS_PODMAN_SOCKET_PATH}"
+		fi
 	fi
 
 	cat > "${ENV_FILE}" <<EOF
@@ -1029,8 +1067,12 @@ install_systemd_service() {
 
 	local runtime_unit="docker.service"
 	local runtime_env=""
+	local runtime_wants=""
 	if [[ "${EFFECTIVE_CONTAINER_RUNTIME}" == "podman" ]]; then
-		runtime_unit="podman.socket"
+		local homeio_uid
+		homeio_uid="$(id -u "${APP_USER}")"
+		runtime_unit="podman.socket user@${homeio_uid}.service"
+		runtime_wants="user@${homeio_uid}.service"
 		runtime_env=$'Environment=DOCKER_HOST=unix:///run/podman/podman.sock\nEnvironment=CONTAINER_HOST=unix:///run/podman/podman.sock'
 	fi
 
@@ -1038,7 +1080,7 @@ install_systemd_service() {
 [Unit]
 Description=${APP_NAME}
 After=network-online.target postgresql.service ${runtime_unit}
-Wants=network-online.target postgresql.service
+Wants=network-online.target postgresql.service ${runtime_wants}
 
 [Service]
 Type=simple

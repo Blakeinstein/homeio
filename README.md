@@ -86,6 +86,8 @@ The host install runs the Homeio and upload services as the non-login system use
 
 Homeio's Docker or rootful Podman socket access is highly privileged. Host-management actions that directly require root (for example disk mounts, firewall/system settings, and OS updates) may not work from the UI; use the corresponding command or update script from an administrator shell.
 
+On Podman host installs, the installer also enables the rootless Podman socket for `homeio` and scans its standard Quadlet directory, `/var/lib/homeio/.config/containers/systemd`. Flat `*.container` units there appear individually on the dashboard. Quadlets running under another Linux user remain in that user's separate Podman store; to move them, copy their unit files and required bind-mounted data to the `homeio` account, stop the old-user units, then reload and enable the units with `systemctl --user` as `homeio`. They are not migrated automatically, and their data paths may need ownership/permission changes.
+
 Podman is supported as an alternative to Docker — pass `HOMEIO_CONTAINER_RUNTIME=podman`, or leave it unset to auto-detect (Podman is used automatically when it's already installed and Docker isn't):
 
 ```bash

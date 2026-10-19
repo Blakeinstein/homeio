@@ -74,6 +74,24 @@ describe("discoverQuadletServices", () => {
     expect(await discoverQuadletServices(root)).toEqual([]);
   });
 
+  it("discovers flat unit files from a standard user Quadlet directory", async () => {
+    await writeFile(
+      path.join(root, "immich-server.container"),
+      "[Container]\nImage=ghcr.io/immich-app/server:latest\nPublishPort=2283:2283\n",
+      "utf8",
+    );
+
+    const services = await discoverQuadletServices(root);
+
+    expect(services).toHaveLength(1);
+    expect(services[0]).toMatchObject({
+      id: "immich-server",
+      name: "Immich Server",
+      webUiPort: 2283,
+      primaryContainerName: "systemd-immich-server",
+    });
+  });
+
   it("skips folders with no .container unit files", async () => {
     await mkdir(path.join(root, "not-a-service"), { recursive: true });
     await writeFile(path.join(root, "not-a-service", "README.md"), "hi", "utf8");

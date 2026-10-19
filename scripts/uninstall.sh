@@ -258,6 +258,14 @@ remove_system_user_group() {
 
 	if id -u "${APP_USER}" >/dev/null 2>&1; then
 		print_status "Removing system user ${APP_USER}..."
+		local app_uid runtime_dir
+		app_uid="$(id -u "${APP_USER}")"
+		runtime_dir="/run/user/${app_uid}"
+		runuser -u "${APP_USER}" -- env \
+			HOME="${APP_HOME}" \
+			XDG_RUNTIME_DIR="${runtime_dir}" \
+			DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus" \
+			systemctl --user disable --now podman.socket >/dev/null 2>&1 || true
 		loginctl disable-linger "${APP_USER}" >/dev/null 2>&1 || true
 		userdel --remove-home "${APP_USER}" >/dev/null 2>&1 || true
 	fi

@@ -140,8 +140,12 @@ ensure_homeio_runtime_user() {
 	local docker_socket_path
 	docker_socket_path="$(sed -n 's/^DOCKER_SOCKET_PATH=//p' "${ENV_FILE}" | head -n 1 | tr -d "\"'")"
 	local runtime_environment=""
+	local runtime_unit_dependency=""
 	if [[ "${docker_socket_path}" == "/run/podman/podman.sock" ]]; then
 		runtime_environment=$'Environment=DOCKER_HOST=unix:///run/podman/podman.sock\nEnvironment=CONTAINER_HOST=unix:///run/podman/podman.sock'
+		local homeio_uid
+		homeio_uid="$(id -u "${APP_USER}")"
+		runtime_unit_dependency=$'[Unit]\nAfter=user@'"${homeio_uid}"$'.service\nWants=user@'"${homeio_uid}"$'.service'
 		local dropin_dir="/etc/systemd/system/podman.socket.d"
 		mkdir -p "${dropin_dir}"
 		cat >"${dropin_dir}/10-homeio.conf" <<EOF
@@ -154,6 +158,7 @@ EOF
 		if systemctl cat podman-restart.service >/dev/null 2>&1; then
 			systemctl enable podman-restart.service
 		fi
+		configure_homeio_rootless_podman
 	elif getent group docker >/dev/null 2>&1; then
 		usermod -aG docker "${APP_USER}"
 	fi
@@ -162,6 +167,7 @@ EOF
 	local dropin_dir="/etc/systemd/system/${unit_name}.service.d"
 	mkdir -p "${dropin_dir}"
 	cat >"${dropin_dir}/20-runtime-user.conf" <<EOF
+${runtime_unit_dependency}
 [Service]
 User=${APP_USER}
 Group=${APP_GROUP}
@@ -179,6 +185,59 @@ Environment=HOMEIO_GROUP=${APP_GROUP}
 EOF
 	fi
 	systemctl daemon-reload
+}
+
+configure_homeio_rootless_podman() {
+	local uid runtime_dir socket_path
+	uid="$(id -u "${APP_USER}")"
+	runtime_dir="/run/user/${uid}"
+	socket_path="${runtime_dir}/podman/podman.sock"
+	set_env_key "PODMAN_ROOTLESS_SOCKET_PATH" "${socket_path}" "${ENV_FILE}"
+	set_env_key "QUADLET_SERVICES_ROOT" "${APP_HOME}/.config/containers/systemd" "${ENV_FILE}"
+	mkdir -p "${APP_HOME}/.config/containers/systemd"
+	chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}/.config"
+
+	command_exists loginctl && loginctl enable-linger "${APP_USER}"
+	if ! systemctl start "user@${uid}.service" >/dev/null 2>&1; then
+		print_warn "Could not start ${APP_USER}'s systemd user manager; rootless Podman/Quadlet discovery needs manual setup."
+		return 0
+	fi
+
+	if runuser -u "${APP_USER}" -- env \
+		HOME="${APP_HOME}" \
+		XDG_RUNTIME_DIR="${runtime_dir}" \
+		DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus" \
+		systemctl --user enable --now podman.socket >/dev/null 2>&1 && [[ -S "${socket_path}" ]]; then
+		print_status "Enabled ${APP_USER}'s rootless Podman socket at ${socket_path}."
+	else
+		print_warn "Could not enable ${APP_USER}'s rootless Podman socket; rootless containers will not be visible yet."
+	fi
+
+}
+
+set_env_key() {
+	local key="${1}"
+	local value="${2}"
+	local file="${3}"
+	local tmp_file
+	tmp_file="$(mktemp)"
+
+	awk -v key="${key}" -v value="${value}" '
+		BEGIN { replaced = 0 }
+		$0 ~ ("^" key "=") {
+			if (!replaced) {
+				print key "=" value
+				replaced = 1
+			}
+			next
+		}
+		{ print }
+		END {
+			if (!replaced) print key "=" value
+		}
+	' "${file}" >"${tmp_file}"
+	cat "${tmp_file}" >"${file}"
+	rm -f "${tmp_file}"
 }
 
 apply_homeio_ownership() {
