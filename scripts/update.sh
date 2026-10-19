@@ -110,6 +110,13 @@ hash_file() {
 	sha256sum "${file}" | awk '{print $1}'
 }
 
+# The application checkout is owned by the unprivileged `homeio` account, but
+# updates run as root. Trust only this configured repository for Git commands;
+# do not weaken safe.directory checks globally.
+git_install() {
+	git -c "safe.directory=${INSTALL_DIR}" -C "${INSTALL_DIR}" "$@"
+}
+
 check_prerequisites() {
 	print_status "Checking prerequisites..."
 	command_exists apt-get || { print_error "apt-get is required."; exit 1; }
@@ -288,7 +295,7 @@ ensure_security_dependencies() {
 capture_current_state() {
 	PREVIOUS_LOCK_HASH="$(hash_file "${INSTALL_DIR}/package-lock.json" || true)"
 	if [[ -d "${INSTALL_DIR}/.git" ]]; then
-		PREVIOUS_GIT_REV="$(git -C "${INSTALL_DIR}" rev-parse HEAD || true)"
+		PREVIOUS_GIT_REV="$(git_install rev-parse HEAD || true)"
 	fi
 }
 
@@ -315,8 +322,8 @@ create_backup() {
 deploy_from_git() {
 	if [[ -d "${INSTALL_DIR}/.git" ]]; then
 		print_status "Updating from git (${REPO_BRANCH})..."
-		git -C "${INSTALL_DIR}" fetch --depth=1 origin "${REPO_BRANCH}" --quiet
-		git -C "${INSTALL_DIR}" checkout --force FETCH_HEAD --quiet
+		git_install fetch --depth=1 origin "${REPO_BRANCH}" --quiet
+		git_install checkout --force FETCH_HEAD --quiet
 	else
 		print_warn "No git repository at ${INSTALL_DIR}. Cloning fresh copy from ${REPO_URL}..."
 		local tmp_dir
@@ -874,7 +881,7 @@ rollback_release() {
 		rsync -a --delete "${BACKUP_DIR}/" "${INSTALL_DIR}/"
 	elif [[ -n "${PREVIOUS_GIT_REV}" && -d "${INSTALL_DIR}/.git" ]]; then
 		print_status "Restoring previous git revision ${PREVIOUS_GIT_REV}..."
-		git -C "${INSTALL_DIR}" checkout --force "${PREVIOUS_GIT_REV}" --quiet
+		git_install checkout --force "${PREVIOUS_GIT_REV}" --quiet
 	else
 		print_error "No rollback source available."; exit 1;
 	fi

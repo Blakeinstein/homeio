@@ -29,6 +29,8 @@ describe("host service user scripts", () => {
     expect(script).toContain("20-runtime-user.conf");
     expect(script).toContain("configure_homeio_rootless_podman");
     expect(script).toContain('set_env_key "PODMAN_ROOTLESS_SOCKET_PATH"');
+    expect(script).toContain('git -c "safe.directory=${INSTALL_DIR}" -C "${INSTALL_DIR}" "$@"');
+    expect(script).toContain("git_install fetch --depth=1 origin");
     expect(script).toContain("User=${APP_USER}\nGroup=${APP_GROUP}");
     expect(script).toContain("apply_homeio_ownership");
   });
