@@ -5,6 +5,8 @@ export const queryKeys = {
   systemUpdates: ["system", "updates"] as const,
   systemSecurity: ["system", "security"] as const,
   systemBackups: ["system", "backups"] as const,
+  backupAgentStatus: ["system", "backup-agent"] as const,
+  backupAgentConfig: ["settings", "backup-agent"] as const,
   networkStatus: ["network", "status"] as const,
   networkOverview: ["network", "overview"] as const,
   diskActivity: ["system", "disks", "activity"] as const,

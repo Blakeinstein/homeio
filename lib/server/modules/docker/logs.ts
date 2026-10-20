@@ -11,8 +11,9 @@ export type DockerLogLine = {
 };
 
 /**
- * Opens a streaming HTTP connection to the Docker socket for container logs.
- * Returns the raw IncomingMessage — caller is responsible for destroying it.
+ * Opens a streaming HTTP connection to a Docker-compatible socket for
+ * container logs. Returns the raw IncomingMessage — caller is responsible
+ * for destroying it.
  *
  * The response body uses Docker's multiplexed stream format:
  *   byte 0:   stream type (1 = stdout, 2 = stderr)
@@ -20,16 +21,17 @@ export type DockerLogLine = {
  *   bytes 4-7: big-endian uint32 payload size
  *   then:     payload bytes
  */
-export function streamDockerContainerLogs(
+function streamContainerLogsFromSocket(
   containerName: string,
-  tail = 200,
+  tail: number,
+  socketPath: string,
 ): Promise<IncomingMessage> {
   const path = `/containers/${encodeURIComponent(containerName)}/logs?follow=1&stdout=1&stderr=1&timestamps=1&tail=${tail}`;
 
   return new Promise((resolve, reject) => {
     const req = request(
       {
-        socketPath: serverEnv.DOCKER_SOCKET_PATH,
+        socketPath,
         path,
         method: "GET",
         headers: { Host: "docker" },
@@ -57,6 +59,36 @@ export function streamDockerContainerLogs(
     req.on("error", reject);
     req.end();
   });
+}
+
+/**
+ * Rootless Podman containers (unmanaged containers Homeio surfaced from that
+ * socket, or a discovered quadlet app's) have no logs on the primary Docker
+ * socket at all -- they live in a separate container store. Try the primary
+ * socket first since that is where most containers are, then fall back to
+ * the rootless Podman socket if one is configured.
+ */
+export async function streamDockerContainerLogs(
+  containerName: string,
+  tail = 200,
+): Promise<IncomingMessage> {
+  try {
+    return await streamContainerLogsFromSocket(containerName, tail, serverEnv.DOCKER_SOCKET_PATH);
+  } catch (primaryError) {
+    if (!serverEnv.PODMAN_ROOTLESS_SOCKET_PATH) throw primaryError;
+
+    try {
+      return await streamContainerLogsFromSocket(
+        containerName,
+        tail,
+        serverEnv.PODMAN_ROOTLESS_SOCKET_PATH,
+      );
+    } catch {
+      // The primary socket's error is almost always the relevant one (e.g.
+      // "no such container" on the socket that should have had it).
+      throw primaryError;
+    }
+  }
 }
 
 /**

@@ -1,5 +1,6 @@
 import { parseComposeFile } from "@/lib/server/modules/docker/compose-parser";
 import {
+    applyDefaultRestartPolicy,
     applyWebUiPortOverride,
     cleanupComposeDataOnUninstall,
     collectComposeBindMountOwnershipOverrides,
@@ -18,6 +19,21 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("compose runner helpers", () => {
+  it("defaults services to restart after a machine reboot", () => {
+    const compose = `services:\n  web:\n    image: example/web\n  db:\n    image: postgres\n    restart: always\n`;
+
+    const updated = applyDefaultRestartPolicy(compose);
+
+    expect(updated).toContain("  web:\n    restart: unless-stopped\n    image: example/web");
+    expect(updated).toContain("    restart: always");
+    expect(updated.match(/restart:/g)).toHaveLength(2);
+  });
+
+  it("leaves compose unchanged when every service has an explicit restart policy", () => {
+    const compose = "services:\n  app:\n    image: example/app\n    restart: no\n";
+    expect(applyDefaultRestartPolicy(compose)).toBe(compose);
+  });
+
   it("overrides first numeric host port mapping", () => {
     const compose = `
 services:

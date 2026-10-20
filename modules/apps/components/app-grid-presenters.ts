@@ -7,6 +7,7 @@ import type {
   StoreOperationStatus,
 } from "@/lib/shared/contracts/apps";
 import type { UnmanagedContainer } from "@/lib/shared/contracts/docker";
+import type { QuadletApp } from "@/lib/shared/contracts/quadlet";
 import type { AppCondition, AppConditionSummary } from "@/lib/shared/app-condition";
 import {
   AlertTriangle,
@@ -361,6 +362,29 @@ export function buildUnmanagedAppItems(
       webUiPort: container.webUiPort,
       webUiUrl: null,
       containerName: container.name,
+      updateAvailable: false,
+    } satisfies AppItem;
+  });
+}
+
+/** Apps discovered from Podman quadlet service folders (see `QUADLET_SERVICES_ROOT`). */
+export function buildQuadletAppItems(apps: QuadletApp[]): AppItem[] {
+  return apps.map((app) => {
+    const visual = pickVisual(app.name, app.id);
+
+    return {
+      id: app.id,
+      name: app.name,
+      icon: visual.icon,
+      logoUrl: app.logoUrl,
+      color: visual.color,
+      bgColor: visual.bgColor,
+      status: "unmanaged" as const,
+      condition: app.condition,
+      category: app.category ?? visual.category,
+      webUiPort: app.webUiPort,
+      webUiUrl: null,
+      containerName: app.primaryContainerName,
       updateAvailable: false,
     } satisfies AppItem;
   });

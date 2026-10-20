@@ -40,6 +40,8 @@ A self-hosted server manager with a desktop-style UI. Alternative to CasaOS, Umb
 - Local folder sharing over Samba and SMB network mount/unmount
 - Terminal with command allowlist (ls, cat, docker, df, ping, and more)
 - Docker container stats in real time, including containers Homeio did not deploy
+- Podman quadlet discovery: point `QUADLET_SERVICES_ROOT` at a folder of quadlet services and Homeio shows each one on the dashboard with its own name, icon, and port, resolved to its running containers
+- homelab-backup integration: enable it in Settings to recognize [homelab-backup](https://github.com/Blakeinstein/homelab-backup) — a backup agent running alongside Homeio as a separate systemd service — and show a Backups widget linking to its dashboard
 - Network manager: WiFi and Ethernet via NetworkManager
 - Weather widget with location-based conditions
 - PostgreSQL-backed persistence
@@ -79,6 +81,37 @@ curl -fsSL https://raw.githubusercontent.com/doctor-io/homeio/main/scripts/insta
 ```
 
 The app listens on `127.0.0.1:12026` and is exposed on `:80` via Nginx.
+
+The host install runs the Homeio and upload services as the non-login system user `homeio`. The account is linger-enabled so its user systemd manager is available at boot; the system service itself is enabled for `multi-user.target`. Homeio keeps access to the selected container runtime. Compose services without an explicit restart policy default to `unless-stopped`; Homeio also applies that policy to already-installed services on startup, so they return after a reboot unless they were explicitly configured otherwise.
+
+Homeio's Docker or rootful Podman socket access is highly privileged. Host-management actions that directly require root (for example disk mounts, firewall/system settings, and OS updates) may not work from the UI; use the corresponding command or update script from an administrator shell.
+
+On Podman host installs, the installer also enables the rootless Podman socket for `homeio` and scans its standard Quadlet directory, `/var/lib/homeio/.config/containers/systemd`. Flat `*.container` units there appear individually on the dashboard. Quadlets running under another Linux user remain in that user's separate Podman store; to move them, copy their unit files and required bind-mounted data to the `homeio` account, stop the old-user units, then reload and enable the units with `systemctl --user` as `homeio`. They are not migrated automatically, and their data paths may need ownership/permission changes.
+
+Podman is supported as an alternative to Docker — pass `HOMEIO_CONTAINER_RUNTIME=podman`, or leave it unset to auto-detect (Podman is used automatically when it's already installed and Docker isn't):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/doctor-io/homeio/main/scripts/install.sh -o install.sh
+sudo HOMEIO_CONTAINER_RUNTIME=podman bash install.sh
+```
+
+If you manage services as Podman quadlets (one folder per service, each holding `*.container` unit files), set `QUADLET_SERVICES_ROOT` to that folder and Homeio will list each one on the dashboard. Drop an `app.yaml` next to a service's unit files to control how it's displayed:
+
+```yaml
+# /path/to/services/sure/app.yaml
+name: Sure                 # optional, defaults to the folder name
+icon: icon.png              # optional: a URL, or a path relative to this folder
+description: Personal finance app  # optional
+category: Finance           # optional
+port: 3064                  # optional: overrides the auto-detected published port
+primaryContainer: sure-web  # optional: which unit's container represents the app (for multi-container services)
+```
+
+If you also run [homelab-backup](https://github.com/Blakeinstein/homelab-backup) — a standalone backup agent that lives alongside your quadlet services but runs as its own systemd service rather than a container — turn it on in **Settings → Integrations → homelab-backup**. Enabling it shows a Backups widget linking to its dashboard. Choose how to reach it:
+- **Fixed URL** — an absolute address, e.g. `http://127.0.0.1:3095` (its own default if you leave this blank).
+- **Relative port** — just a port number (e.g. `3095`); Homeio builds the link from whatever host and protocol you're currently viewing its own dashboard on. Use this instead of a fixed URL whenever you reach Homeio over Tailscale, a tunnel, or a LAN IP rather than `127.0.0.1` — a fixed `127.0.0.1` URL would open on the viewer's own machine, not the server.
+
+Leave the config path blank to auto-detect it under `<QUADLET_SERVICES_ROOT>/homelab-backup/backup-services.yaml`, or set it if yours differs. `HOMELAB_BACKUP_URL` sets the same default as the Fixed URL field, at the environment level, for scripted deploys.
 
 **Update:**
 

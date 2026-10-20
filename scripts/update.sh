@@ -10,6 +10,9 @@ NC='\033[0m'
 APP_NAME="home-server"
 INSTALL_DIR="${HOMEIO_INSTALL_DIR:-/opt/home-server}"
 ENV_FILE="${HOMEIO_ENV_FILE:-${INSTALL_DIR}/.env}"
+APP_USER="homeio"
+APP_GROUP="homeio"
+APP_HOME="/var/lib/homeio"
 SERVICE_NAME="${HOMEIO_SERVICE_NAME:-home-server}"
 DBUS_SERVICE_NAME="${HOMEIO_DBUS_SERVICE_NAME:-home-server-dbus}"
 UPLOAD_SERVICE_NAME="${HOMEIO_UPLOAD_SERVICE_NAME:-home-server-upload}"
@@ -107,6 +110,13 @@ hash_file() {
 	sha256sum "${file}" | awk '{print $1}'
 }
 
+# The application checkout is owned by the unprivileged `homeio` account, but
+# updates run as root. Trust only this configured repository for Git commands;
+# do not weaken safe.directory checks globally.
+git_install() {
+	git -c "safe.directory=${INSTALL_DIR}" -C "${INSTALL_DIR}" "$@"
+}
+
 check_prerequisites() {
 	print_status "Checking prerequisites..."
 	command_exists apt-get || { print_error "apt-get is required."; exit 1; }
@@ -117,6 +127,137 @@ check_prerequisites() {
 
 	[[ -d "${INSTALL_DIR}" ]] || { print_error "Install directory not found: ${INSTALL_DIR}"; exit 1; }
 	[[ -f "${ENV_FILE}" ]] || { print_error "Environment file not found: ${ENV_FILE}"; exit 1; }
+}
+
+ensure_homeio_runtime_user() {
+	if ! getent group "${APP_GROUP}" >/dev/null 2>&1; then
+		groupadd --system "${APP_GROUP}"
+	fi
+	if ! id -u "${APP_USER}" >/dev/null 2>&1; then
+		useradd --system --gid "${APP_GROUP}" --home-dir "${APP_HOME}" --create-home \
+			--shell /usr/sbin/nologin "${APP_USER}"
+	else
+		usermod --gid "${APP_GROUP}" --home "${APP_HOME}" --shell /usr/sbin/nologin "${APP_USER}"
+		mkdir -p "${APP_HOME}"
+	fi
+	chown "${APP_USER}:${APP_GROUP}" "${APP_HOME}"
+	chmod 0750 "${APP_HOME}"
+	command_exists loginctl && loginctl enable-linger "${APP_USER}"
+
+	local docker_socket_path
+	docker_socket_path="$(sed -n 's/^DOCKER_SOCKET_PATH=//p' "${ENV_FILE}" | head -n 1 | tr -d "\"'")"
+	local runtime_environment=""
+	local runtime_unit_dependency=""
+	if [[ "${docker_socket_path}" == "/run/podman/podman.sock" ]]; then
+		runtime_environment=$'Environment=DOCKER_HOST=unix:///run/podman/podman.sock\nEnvironment=CONTAINER_HOST=unix:///run/podman/podman.sock'
+		local homeio_uid
+		homeio_uid="$(id -u "${APP_USER}")"
+		runtime_unit_dependency=$'[Unit]\nAfter=user@'"${homeio_uid}"$'.service\nWants=user@'"${homeio_uid}"$'.service'
+		local dropin_dir="/etc/systemd/system/podman.socket.d"
+		mkdir -p "${dropin_dir}"
+		cat >"${dropin_dir}/10-homeio.conf" <<EOF
+[Socket]
+SocketGroup=${APP_GROUP}
+SocketMode=0660
+EOF
+		systemctl daemon-reload
+		systemctl restart podman.socket
+		if systemctl cat podman-restart.service >/dev/null 2>&1; then
+			systemctl enable podman-restart.service
+		fi
+		configure_homeio_rootless_podman
+	elif getent group docker >/dev/null 2>&1; then
+		usermod -aG docker "${APP_USER}"
+	fi
+
+	local unit_name="${SERVICE_UNIT%.service}"
+	local dropin_dir="/etc/systemd/system/${unit_name}.service.d"
+	mkdir -p "${dropin_dir}"
+	cat >"${dropin_dir}/20-runtime-user.conf" <<EOF
+${runtime_unit_dependency}
+[Service]
+User=${APP_USER}
+Group=${APP_GROUP}
+Environment=HOME=${APP_HOME}
+${runtime_environment}
+EOF
+	if systemctl cat "${DBUS_SERVICE_UNIT}" >/dev/null 2>&1; then
+		local dbus_unit_name="${DBUS_SERVICE_UNIT%.service}"
+		local dbus_dropin_dir="/etc/systemd/system/${dbus_unit_name}.service.d"
+		mkdir -p "${dbus_dropin_dir}"
+		cat >"${dbus_dropin_dir}/20-homeio-group.conf" <<EOF
+[Service]
+Group=${APP_GROUP}
+Environment=HOMEIO_GROUP=${APP_GROUP}
+EOF
+	fi
+	systemctl daemon-reload
+}
+
+configure_homeio_rootless_podman() {
+	local uid runtime_dir socket_path
+	uid="$(id -u "${APP_USER}")"
+	runtime_dir="/run/user/${uid}"
+	socket_path="${runtime_dir}/podman/podman.sock"
+	set_env_key "PODMAN_ROOTLESS_SOCKET_PATH" "${socket_path}" "${ENV_FILE}"
+	set_env_key "QUADLET_SERVICES_ROOT" "${APP_HOME}/.config/containers/systemd" "${ENV_FILE}"
+	mkdir -p "${APP_HOME}/.config/containers/systemd"
+	chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}/.config"
+
+	command_exists loginctl && loginctl enable-linger "${APP_USER}"
+	if ! systemctl start "user@${uid}.service" >/dev/null 2>&1; then
+		print_warn "Could not start ${APP_USER}'s systemd user manager; rootless Podman/Quadlet discovery needs manual setup."
+		return 0
+	fi
+
+	if runuser -u "${APP_USER}" -- env \
+		HOME="${APP_HOME}" \
+		XDG_RUNTIME_DIR="${runtime_dir}" \
+		DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus" \
+		systemctl --user enable --now podman.socket >/dev/null 2>&1 && [[ -S "${socket_path}" ]]; then
+		print_status "Enabled ${APP_USER}'s rootless Podman socket at ${socket_path}."
+	else
+		print_warn "Could not enable ${APP_USER}'s rootless Podman socket; rootless containers will not be visible yet."
+	fi
+
+}
+
+set_env_key() {
+	local key="${1}"
+	local value="${2}"
+	local file="${3}"
+	local tmp_file
+	tmp_file="$(mktemp)"
+
+	awk -v key="${key}" -v value="${value}" '
+		BEGIN { replaced = 0 }
+		$0 ~ ("^" key "=") {
+			if (!replaced) {
+				print key "=" value
+				replaced = 1
+			}
+			next
+		}
+		{ print }
+		END {
+			if (!replaced) print key "=" value
+		}
+	' "${file}" >"${tmp_file}"
+	cat "${tmp_file}" >"${file}"
+	rm -f "${tmp_file}"
+}
+
+apply_homeio_ownership() {
+	mkdir -p "${APP_HOME}/logs" /var/lib/home-server/stacks
+	chown -R "${APP_USER}:${APP_GROUP}" "${INSTALL_DIR}" /var/lib/home-server "${APP_HOME}"
+	if [[ -f "${ENV_FILE}" ]]; then
+		chown "${APP_USER}:${APP_GROUP}" "${ENV_FILE}"
+		chmod 0600 "${ENV_FILE}"
+	fi
+	for data_dir in AppData Documents Media Download .Shared .Network .Trash; do
+		mkdir -p "/DATA/${data_dir}"
+		chown "${APP_USER}:${APP_GROUP}" "/DATA/${data_dir}"
+	done
 }
 
 # Debian 12+ no longer ships rsyslog, so /var/log/auth.log does not exist and
@@ -154,7 +295,7 @@ ensure_security_dependencies() {
 capture_current_state() {
 	PREVIOUS_LOCK_HASH="$(hash_file "${INSTALL_DIR}/package-lock.json" || true)"
 	if [[ -d "${INSTALL_DIR}/.git" ]]; then
-		PREVIOUS_GIT_REV="$(git -C "${INSTALL_DIR}" rev-parse HEAD || true)"
+		PREVIOUS_GIT_REV="$(git_install rev-parse HEAD || true)"
 	fi
 }
 
@@ -181,8 +322,8 @@ create_backup() {
 deploy_from_git() {
 	if [[ -d "${INSTALL_DIR}/.git" ]]; then
 		print_status "Updating from git (${REPO_BRANCH})..."
-		git -C "${INSTALL_DIR}" fetch --depth=1 origin "${REPO_BRANCH}" --quiet
-		git -C "${INSTALL_DIR}" checkout --force FETCH_HEAD --quiet
+		git_install fetch --depth=1 origin "${REPO_BRANCH}" --quiet
+		git_install checkout --force FETCH_HEAD --quiet
 	else
 		print_warn "No git repository at ${INSTALL_DIR}. Cloning fresh copy from ${REPO_URL}..."
 		local tmp_dir
@@ -314,14 +455,17 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=${APP_USER}
+Group=${APP_GROUP}
 EnvironmentFile=${ENV_FILE}
+Environment=HOME=${APP_HOME}
 Environment=UPLOAD_SERVER_ADDR=/run/home-server-upload/upload.sock
 # A directory of its own: the DBus helper owns /run/home-server (mode 0770), and
 # sharing it meant whichever service started last set its mode, and stopping
 # either one deleted the other's socket, leaving nginx unable to reach uploads.
 RuntimeDirectory=home-server-upload
 RuntimeDirectoryMode=0755
+UMask=0007
 ExecStart=${INSTALL_DIR}/bin/upload-server
 Restart=always
 RestartSec=5
@@ -737,7 +881,7 @@ rollback_release() {
 		rsync -a --delete "${BACKUP_DIR}/" "${INSTALL_DIR}/"
 	elif [[ -n "${PREVIOUS_GIT_REV}" && -d "${INSTALL_DIR}/.git" ]]; then
 		print_status "Restoring previous git revision ${PREVIOUS_GIT_REV}..."
-		git -C "${INSTALL_DIR}" checkout --force "${PREVIOUS_GIT_REV}" --quiet
+		git_install checkout --force "${PREVIOUS_GIT_REV}" --quiet
 	else
 		print_error "No rollback source available."; exit 1;
 	fi
@@ -746,6 +890,7 @@ rollback_release() {
 	cd "${INSTALL_DIR}" && npm ci --no-audit --no-fund
 	cd "${INSTALL_DIR}" && npm run build
 	build_upload_server || true
+	apply_homeio_ownership
 	start_service
 	restart_upload_server_service || true
 
@@ -819,6 +964,7 @@ print_summary() {
 main() {
 	require_root
 	check_prerequisites
+	ensure_homeio_runtime_user
 	# Before the rollback trap is armed: a GitHub hiccup only means main is used.
 	resolve_repo_ref
 	capture_current_state
@@ -839,6 +985,7 @@ main() {
 	run_database_migrations
 	build_app
 	build_upload_server
+	apply_homeio_ownership
 	start_service
 	configure_reverse_proxy
 	restart_dbus_helper_service

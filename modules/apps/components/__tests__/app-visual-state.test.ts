@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getAppVisualState, type AppItem } from "@/modules/apps/components/app-grid-presenters";
+import {
+  buildQuadletAppItems,
+  getAppVisualState,
+  type AppItem,
+} from "@/modules/apps/components/app-grid-presenters";
 import { Container } from "@/components/icons/platform-icons";
+import type { QuadletApp } from "@/lib/shared/contracts/quadlet";
 
 function app(overrides: Partial<AppItem>): AppItem {
   return {
@@ -68,5 +73,40 @@ describe("getAppVisualState", () => {
     expect(getAppVisualState(app({ status: "updating", condition: { condition: "crashed", exitCode: 1 } })).title).toBe(
       "Processing",
     );
+  });
+});
+
+describe("buildQuadletAppItems", () => {
+  function quadletApp(overrides: Partial<QuadletApp> = {}): QuadletApp {
+    return {
+      id: "quadlet:sure",
+      name: "Sure",
+      description: "Personal finance app",
+      category: "Finance",
+      logoUrl: "https://cdn.example.com/sure.png",
+      webUiPort: 3064,
+      condition: { condition: "running", exitCode: null },
+      containerNames: ["sure-web", "sure-db"],
+      primaryContainerName: "sure-web",
+      ...overrides,
+    };
+  }
+
+  it("maps a discovered quadlet app to an unmanaged app card carrying its own icon", () => {
+    const [item] = buildQuadletAppItems([quadletApp()]);
+
+    expect(item.id).toBe("quadlet:sure");
+    expect(item.name).toBe("Sure");
+    expect(item.logoUrl).toBe("https://cdn.example.com/sure.png");
+    expect(item.category).toBe("Finance");
+    expect(item.webUiPort).toBe(3064);
+    expect(item.containerName).toBe("sure-web");
+    expect(item.status).toBe("unmanaged");
+    expect(item.condition).toEqual({ condition: "running", exitCode: null });
+  });
+
+  it("falls back to a keyword-derived category when app.yaml has none", () => {
+    const [item] = buildQuadletAppItems([quadletApp({ name: "Grafana", category: null })]);
+    expect(item.category).toBe("System");
   });
 });

@@ -10,6 +10,9 @@ NC='\033[0m'
 APP_NAME="home-server"
 INSTALL_DIR="${HOMEIO_INSTALL_DIR:-/opt/home-server}"
 ENV_FILE="${INSTALL_DIR}/.env"
+APP_USER="homeio"
+APP_GROUP="homeio"
+APP_HOME="/var/lib/homeio"
 SERVICE_NAME="${HOMEIO_SERVICE_NAME:-home-server}"
 DBUS_SERVICE_NAME="${HOMEIO_DBUS_SERVICE_NAME:-home-server-dbus}"
 APP_PORT="${HOMEIO_APP_PORT:-${HOMEIO_PORT:-12026}}"
@@ -41,6 +44,7 @@ HOMEIO_CONTAINER_RUNTIME="${HOMEIO_CONTAINER_RUNTIME:-}"   # empty = auto-detect
 
 EFFECTIVE_DB_USER=""
 EFFECTIVE_CONTAINER_RUNTIME=""
+ROOTLESS_PODMAN_SOCKET_PATH=""
 
 print_status() { echo -e "${GREEN}[+]${NC} $1"; }
 print_error() { echo -e "${RED}[!]${NC} $1" >&2; }
@@ -113,6 +117,28 @@ validate_identifiers() {
 		|| { print_error "Invalid HOMEIO_CONTAINER_RUNTIME: ${HOMEIO_CONTAINER_RUNTIME} (expected docker|podman)"; exit 1; }
 	if [[ "${admin_username}" != "auto" ]]; then
 		[[ "${admin_username}" =~ ^[a-zA-Z0-9._-]{3,64}$ ]] || { print_error "Invalid HOMEIO_ADMIN_USERNAME: ${admin_username}"; exit 1; }
+	fi
+}
+
+ensure_homeio_user() {
+	print_status "Ensuring system user ${APP_USER}..."
+	if ! getent group "${APP_GROUP}" >/dev/null 2>&1; then
+		groupadd --system "${APP_GROUP}"
+	fi
+	if ! id -u "${APP_USER}" >/dev/null 2>&1; then
+		useradd --system --gid "${APP_GROUP}" --home-dir "${APP_HOME}" --create-home \
+			--shell /usr/sbin/nologin "${APP_USER}"
+	else
+		usermod --gid "${APP_GROUP}" --home "${APP_HOME}" --shell /usr/sbin/nologin "${APP_USER}"
+		mkdir -p "${APP_HOME}"
+	fi
+	chown "${APP_USER}:${APP_GROUP}" "${APP_HOME}"
+	chmod 0750 "${APP_HOME}"
+
+	# Keep the account's systemd user manager available at boot, including for
+	# optional rootless Podman/quadlet services configured for this user.
+	if command_exists loginctl; then
+		loginctl enable-linger "${APP_USER}"
 	fi
 }
 
@@ -517,12 +543,62 @@ install_podman() {
 		rm -f "${podman_log}"
 	fi
 
-	# Rootful compat-API socket at /run/podman/podman.sock, matching the
-	# root-run homeio service -- no rootless socket-permission juggling needed.
+	# Homeio runs as its own system user but retains access to the rootful
+	# compatibility API. The socket remains root-managed; only its group access
+	# is granted to Homeio.
 	if ! systemctl enable --now podman.socket >/dev/null 2>&1; then
 		print_error "Podman installed but podman.socket failed to start. Run: systemctl status podman.socket"
 		exit 1
 	fi
+	configure_podman_socket_access
+	if systemctl cat podman-restart.service >/dev/null 2>&1; then
+		systemctl enable podman-restart.service
+	fi
+	configure_homeio_rootless_podman
+}
+
+configure_podman_socket_access() {
+	local dropin_dir="/etc/systemd/system/podman.socket.d"
+	mkdir -p "${dropin_dir}"
+	cat >"${dropin_dir}/10-homeio.conf" <<EOF
+[Socket]
+SocketGroup=${APP_GROUP}
+SocketMode=0660
+EOF
+	systemctl daemon-reload
+	systemctl restart podman.socket
+}
+
+configure_homeio_rootless_podman() {
+	local uid runtime_dir socket_path
+	mkdir -p "${APP_HOME}/.config/containers/systemd"
+	chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}/.config"
+	uid="$(id -u "${APP_USER}")"
+	runtime_dir="/run/user/${uid}"
+	socket_path="${runtime_dir}/podman/podman.sock"
+	ROOTLESS_PODMAN_SOCKET_PATH="${socket_path}"
+
+	command_exists loginctl && loginctl enable-linger "${APP_USER}"
+	if ! systemctl start "user@${uid}.service" >/dev/null 2>&1; then
+		print_warn "Could not start ${APP_USER}'s systemd user manager; rootless Podman/Quadlet discovery will need manual setup."
+		return 0
+	fi
+
+	if ! runuser -u "${APP_USER}" -- env \
+		HOME="${APP_HOME}" \
+		XDG_RUNTIME_DIR="${runtime_dir}" \
+		DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus" \
+		systemctl --user enable --now podman.socket >/dev/null 2>&1; then
+		print_warn "Could not enable ${APP_USER}'s rootless Podman socket; Quadlets will need manual setup."
+		return 0
+	fi
+
+	if [[ ! -S "${socket_path}" ]]; then
+		print_warn "Rootless Podman socket was not created at ${socket_path}."
+		return 0
+	fi
+
+	print_status "Enabled ${APP_USER}'s rootless Podman socket at ${socket_path}."
 }
 
 install_container_runtime() {
@@ -530,6 +606,9 @@ install_container_runtime() {
 		install_podman
 	else
 		install_docker
+		if getent group docker >/dev/null 2>&1; then
+			usermod -aG docker "${APP_USER}"
+		fi
 	fi
 }
 
@@ -642,14 +721,17 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=${APP_USER}
+Group=${APP_GROUP}
 EnvironmentFile=${ENV_FILE}
+Environment=HOME=${APP_HOME}
 Environment=UPLOAD_SERVER_ADDR=/run/home-server-upload/upload.sock
 # A directory of its own: the DBus helper owns /run/home-server (mode 0770), and
 # sharing it meant whichever service started last set its mode, and stopping
 # either one deleted the other's socket, leaving nginx unable to reach uploads.
 RuntimeDirectory=home-server-upload
 RuntimeDirectoryMode=0755
+UMask=0007
 ExecStart=${INSTALL_DIR}/bin/upload-server
 Restart=always
 RestartSec=5
@@ -724,6 +806,13 @@ ensure_directories() {
 	# Stack storage (STORE_STACKS_ROOT) and logs
 	mkdir -p /var/lib/home-server/stacks
 	mkdir -p "${INSTALL_DIR}/logs"
+	mkdir -p "${APP_HOME}/logs"
+	for data_dir in AppData Documents Media Download .Shared .Network .Trash; do
+		mkdir -p "/DATA/${data_dir}"
+		chown "${APP_USER}:${APP_GROUP}" "/DATA/${data_dir}"
+	done
+	chown -R "${APP_USER}:${APP_GROUP}" /var/lib/home-server "${APP_HOME}"
+	chown "${APP_USER}:${APP_GROUP}" "${INSTALL_DIR}/logs"
 }
 
 clone_or_update_repo() {
@@ -808,10 +897,14 @@ create_env_file() {
 	local db_name="${HOMEIO_DB_NAME:-home_server}"
 	local database_url="postgresql://${db_user}:${db_password}@127.0.0.1:5432/${db_name}"
 
-	# Podman's Docker-compat API socket; Docker keeps env.ts's own default.
+	# Rootful Podman compatibility API socket; the rootless Homeio user socket is
+	# configured separately so Homeio can also discover its Quadlet containers.
 	local docker_socket_line=""
 	if [[ "${EFFECTIVE_CONTAINER_RUNTIME}" == "podman" ]]; then
-		docker_socket_line="DOCKER_SOCKET_PATH=/run/podman/podman.sock"
+		docker_socket_line=$'DOCKER_SOCKET_PATH=/run/podman/podman.sock\nDOCKER_HOST=unix:///run/podman/podman.sock\nCONTAINER_HOST=unix:///run/podman/podman.sock\nQUADLET_SERVICES_ROOT='"${APP_HOME}"'/.config/containers/systemd'
+		if [[ -n "${ROOTLESS_PODMAN_SOCKET_PATH}" ]]; then
+			docker_socket_line+=$'\nPODMAN_ROOTLESS_SOCKET_PATH='"${ROOTLESS_PODMAN_SOCKET_PATH}"
+		fi
 	fi
 
 	cat > "${ENV_FILE}" <<EOF
@@ -842,7 +935,7 @@ WEBSOCKET_ENABLED=true
 # Logging
 LOG_LEVEL=info
 LOG_TO_FILE=true
-LOG_FILE_PATH=${INSTALL_DIR}/logs/home-server.log
+LOG_FILE_PATH=${APP_HOME}/logs/home-server.log
 NEXT_PUBLIC_LOG_LEVEL=info
 
 # D-Bus Helper
@@ -853,6 +946,8 @@ STORE_STACKS_ROOT=/var/lib/home-server/stacks
 STORE_APP_DATA_ROOT=/DATA/AppData
 ${docker_socket_line}
 EOF
+	chown "${APP_USER}:${APP_GROUP}" "${ENV_FILE}"
+	chmod 0600 "${ENV_FILE}"
 
 	# Store for downstream steps
 	EFFECTIVE_DB_USER="${db_user}"
@@ -967,21 +1062,34 @@ install_systemd_service() {
 
 	local unit_file="/etc/systemd/system/${SERVICE_NAME}.service"
 	print_status "Installing systemd unit ${SERVICE_NAME}.service..."
+	chown -R "${APP_USER}:${APP_GROUP}" "${INSTALL_DIR}"
+	rm -f "/etc/systemd/system/${SERVICE_NAME}.service.d/20-runtime-user.conf"
 
 	local runtime_unit="docker.service"
-	[[ "${EFFECTIVE_CONTAINER_RUNTIME}" == "podman" ]] && runtime_unit="podman.socket"
+	local runtime_env=""
+	local runtime_wants=""
+	if [[ "${EFFECTIVE_CONTAINER_RUNTIME}" == "podman" ]]; then
+		local homeio_uid
+		homeio_uid="$(id -u "${APP_USER}")"
+		runtime_unit="podman.socket user@${homeio_uid}.service"
+		runtime_wants="user@${homeio_uid}.service"
+		runtime_env=$'Environment=DOCKER_HOST=unix:///run/podman/podman.sock\nEnvironment=CONTAINER_HOST=unix:///run/podman/podman.sock'
+	fi
 
 	cat >"${unit_file}" <<EOF
 [Unit]
 Description=${APP_NAME}
 After=network-online.target postgresql.service ${runtime_unit}
-Wants=network-online.target postgresql.service
+Wants=network-online.target postgresql.service ${runtime_wants}
 
 [Service]
 Type=simple
-User=root
+User=${APP_USER}
+Group=${APP_GROUP}
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${ENV_FILE}
+Environment=HOME=${APP_HOME}
+${runtime_env}
 ExecStart=/usr/bin/env node --import tsx ${INSTALL_DIR}/server.ts
 Restart=always
 RestartSec=10
@@ -1271,6 +1379,7 @@ install_dbus_helper_service() {
 
 	local unit_file="/etc/systemd/system/${DBUS_SERVICE_NAME}.service"
 	print_status "Installing systemd unit ${DBUS_SERVICE_NAME}.service..."
+	rm -f "/etc/systemd/system/${DBUS_SERVICE_NAME}.service.d/20-homeio-group.conf"
 
 	cat >"${unit_file}" <<EOF
 [Unit]
@@ -1281,8 +1390,9 @@ Wants=NetworkManager.service
 [Service]
 Type=simple
 User=root
-Group=root
+Group=${APP_GROUP}
 WorkingDirectory=${INSTALL_DIR}
+Environment=HOMEIO_GROUP=${APP_GROUP}
 Environment=DBUS_HELPER_SOCKET_PATH=/run/home-server/dbus-helper.sock
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/usr/bin/env node ${INSTALL_DIR}/services/dbus-helper/index.mjs
@@ -1342,6 +1452,7 @@ print_summary() {
 	echo -e "${GREEN}│${NC}                                                  ${GREEN}│${NC}"
 	echo -e "${GREEN}╰────────────────────────────────────────────────────╯${NC}"
 	echo ""
+	echo -e "${BLUE}Service account:${NC} ${APP_USER}"
 
 	echo -e "${BLUE}Manage service:${NC}"
 	echo -e "  sudo systemctl [start|stop|restart|status] ${SERVICE_NAME}.service"
@@ -1417,6 +1528,7 @@ main() {
 	run_step "Installing base packages..." install_packages
 	run_step "Installing extras packages..." install_extras
 	run_step "Ensuring security dependencies..." ensure_security_dependencies
+	run_step "Creating Homeio system user..." ensure_homeio_user
 	run_step "Installing container runtime..." install_container_runtime
 	run_step "Installing Node.js..." install_node
 	run_step "Installing Go..." install_go

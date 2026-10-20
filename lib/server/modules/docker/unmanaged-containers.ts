@@ -2,6 +2,8 @@ import "server-only";
 
 import { listContainers, type DockerContainerPort } from "@/lib/server/modules/docker/stats";
 import { listInstalledStacksFromDb } from "@/lib/server/modules/apps/stacks-repository";
+import { toContainerName } from "@/lib/server/modules/docker/container-name";
+import { listClaimedQuadletContainerNames } from "@/lib/server/modules/docker/quadlet-apps";
 import { logServerAction } from "@/lib/server/logging/logger";
 import { homeioComponentOf } from "@/lib/server/modules/integrations/cloudflared-connectors";
 import {
@@ -27,13 +29,6 @@ export type UnmanagedContainer = {
   webUiPort: number | null;
 };
 
-function toContainerName(names: string[] | undefined, id: string) {
-  const first = names?.[0]?.trim() ?? "";
-  // Docker prefixes container names with a slash.
-  const stripped = first.startsWith("/") ? first.slice(1) : first;
-  return stripped.length > 0 ? stripped : id.slice(0, 12);
-}
-
 /**
  * Homeio doesn't know which published port (if any) serves a web UI for a
  * container it didn't install itself, so this is a best-effort guess: the
@@ -57,13 +52,16 @@ export function pickWebUiPort(ports: DockerContainerPort[] | undefined): number 
  * Containers running on this host that Homeio did not deploy.
  *
  * Homeio drives its own apps through `docker compose -p <stackName>`, so a
- * container whose compose project matches a known stack is ours. Everything
- * else was started by something else -- CasaOS, Portainer, a bare `docker run`
- * -- and is surfaced read-only for now. Homeio's own components, such as the
- * Cloudflare connector, are neither: they live in Settings.
+ * container whose compose project matches a known stack is ours. A container
+ * claimed by a discovered quadlet service (see `quadlet-apps.ts`) is also not
+ * "unmanaged" in the sense this list means: it has a name and an icon, and
+ * shows up as its own app instead. Everything else was started by something
+ * else -- CasaOS, Portainer, a bare `docker run` -- and is surfaced read-only
+ * for now. Homeio's own components, such as the Cloudflare connector, are
+ * neither: they live in Settings.
  */
 export async function listUnmanagedContainers(): Promise<UnmanagedContainer[]> {
-  const [containers, stacks] = await Promise.all([
+  const [containers, stacks, quadletClaimedNames] = await Promise.all([
     listContainers(),
     listInstalledStacksFromDb().catch((error) => {
       logServerAction({
@@ -76,6 +74,17 @@ export async function listUnmanagedContainers(): Promise<UnmanagedContainer[]> {
       });
       return [];
     }),
+    listClaimedQuadletContainerNames().catch((error) => {
+      logServerAction({
+        level: "warn",
+        layer: "service",
+        action: "docker.unmanaged-containers",
+        status: "error",
+        message: "Could not read discovered quadlet apps; treating all containers as unmanaged",
+        error,
+      });
+      return new Set<string>();
+    }),
   ]);
 
   const managedProjects = new Set(stacks.map((stack) => stack.stackName));
@@ -83,6 +92,7 @@ export async function listUnmanagedContainers(): Promise<UnmanagedContainer[]> {
   return containers
     .filter((container) => {
       if (homeioComponentOf(container)) return false;
+      if (quadletClaimedNames.has(toContainerName(container.Names, container.Id))) return false;
       const project = container.Labels?.[COMPOSE_PROJECT_LABEL];
       return !project || !managedProjects.has(project);
     })

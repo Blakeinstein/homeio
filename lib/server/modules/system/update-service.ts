@@ -262,7 +262,7 @@ export function isContainerRuntime(): boolean {
     return true;
   }
   try {
-    if (existsSync("/.dockerenv")) {
+    if (existsSync("/.dockerenv") || existsSync("/run/.containerenv")) {
       return true;
     }
   } catch {

@@ -10,11 +10,13 @@ const {
   useInstalledAppsMock,
   useStoreCatalogMock,
   useUnmanagedContainersMock,
+  useQuadletAppsMock,
 } = vi.hoisted(() => ({
   useStoreActionsMock: vi.fn(),
   useInstalledAppsMock: vi.fn(),
   useStoreCatalogMock: vi.fn(),
   useUnmanagedContainersMock: vi.fn(),
+  useQuadletAppsMock: vi.fn(),
 }));
 
 vi.mock("@/modules/apps/hooks/useStoreActions", () => ({
@@ -28,6 +30,9 @@ vi.mock("@/modules/apps/hooks/useStoreCatalog", () => ({
 }));
 vi.mock("@/modules/apps/hooks/useUnmanagedContainers", () => ({
   useUnmanagedContainers: (...args: unknown[]) => useUnmanagedContainersMock(...args),
+}));
+vi.mock("@/modules/apps/hooks/useQuadletApps", () => ({
+  useQuadletApps: (...args: unknown[]) => useQuadletAppsMock(...args),
 }));
 
 import { AppGrid } from "@/modules/apps/components/app-grid";
@@ -52,7 +57,13 @@ describe("AppGrid context menu", () => {
     useInstalledAppsMock.mockReset();
     useStoreCatalogMock.mockReset();
     useUnmanagedContainersMock.mockReset();
+    useQuadletAppsMock.mockReset();
     useUnmanagedContainersMock.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    });
+    useQuadletAppsMock.mockReturnValue({
       data: [],
       isLoading: false,
       isError: false,

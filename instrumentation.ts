@@ -19,5 +19,17 @@ export async function register() {
       "@/lib/server/modules/system/metrics-history"
     );
     startMetricsHistory();
+
+    if (process.env.NODE_ENV === "production") {
+      const { isContainerRuntime } = await import(
+        "@/lib/server/modules/system/update-service"
+      );
+      if (!isContainerRuntime()) {
+        const { ensureInstalledAppsRestartOnBoot } = await import(
+          "@/lib/server/modules/apps/restart-policy"
+        );
+        void ensureInstalledAppsRestartOnBoot();
+      }
+    }
   }
 }

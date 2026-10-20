@@ -1,5 +1,6 @@
 "use client";
 
+import { BackupsCard } from "@/modules/system/components/system-widgets/backups-card";
 import { NetworkCard } from "@/modules/system/components/system-widgets/network-card";
 import { QuickStatsCard } from "@/modules/system/components/system-widgets/quick-stats-card";
 import { ResourcesCard } from "@/modules/system/components/system-widgets/resources-card";
@@ -15,6 +16,7 @@ export function SystemWidgets() {
       <ResourcesCard items={model.resources} />
       <NetworkCard network={model.network} />
       <QuickStatsCard stats={model.quickStats} />
+      <BackupsCard backupAgent={model.backupAgent} />
     </aside>
   );
 }
