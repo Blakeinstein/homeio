@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -61,13 +61,16 @@ Restart=on-failure
 
 describe("discoverQuadletServices", () => {
   let root = "";
+  let sourceRoot = "";
 
   beforeEach(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), "homeio-quadlet-"));
+    sourceRoot = await mkdtemp(path.join(os.tmpdir(), "homeio-quadlet-sources-"));
   });
 
   afterEach(async () => {
     if (root) await rm(root, { recursive: true, force: true });
+    if (sourceRoot) await rm(sourceRoot, { recursive: true, force: true });
   });
 
   it("returns an empty list for a root with no service folders", async () => {
@@ -90,6 +93,50 @@ describe("discoverQuadletServices", () => {
       webUiPort: 2283,
       primaryContainerName: "systemd-immich-server",
     });
+  });
+
+  it("groups flat symlinked units by their service folder and reads its app.yaml", async () => {
+    const immichDir = path.join(sourceRoot, "immich");
+    await mkdir(immichDir, { recursive: true });
+    await writeFile(
+      path.join(immichDir, "immich-server.container"),
+      "[Container]\nContainerName=immich\nImage=ghcr.io/immich-app/server:latest\nPublishPort=2283:2283\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(immichDir, "immich-db.container"),
+      "[Container]\nContainerName=immich-db\nImage=postgres:14\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(immichDir, "app.yaml"),
+      "name: Immich\ncategory: Photos\nport: 2283\nprimaryContainer: immich\n",
+      "utf8",
+    );
+    await symlink(
+      path.join(immichDir, "immich-server.container"),
+      path.join(root, "immich-server.container"),
+    );
+    await symlink(
+      path.join(immichDir, "immich-db.container"),
+      path.join(root, "immich-db.container"),
+    );
+
+    const services = await discoverQuadletServices(root);
+
+    expect(services).toHaveLength(1);
+    expect(services[0]).toMatchObject({
+      id: "immich",
+      name: "Immich",
+      category: "Photos",
+      webUiPort: 2283,
+      primaryContainerName: "immich",
+      sourceDir: immichDir,
+    });
+    expect(services[0].containers.map((container) => container.containerName).sort()).toEqual([
+      "immich",
+      "immich-db",
+    ]);
   });
 
   it("skips folders with no .container unit files", async () => {

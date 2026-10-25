@@ -1,6 +1,6 @@
 import "server-only";
 
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import { z } from "zod";
@@ -195,6 +195,7 @@ function resolveIcon(metadataIcon: string | undefined): QuadletAppIcon | null {
 }
 
 type DiscoveredUnit = { unitBaseName: string; info: QuadletContainerInfo };
+type DiscoveredUnitFile = { unitBaseName: string; filePath: string };
 
 function pickPrimaryContainer(
   containers: DiscoveredUnit[],
@@ -234,22 +235,16 @@ export type DiscoveredQuadletService = {
   primaryContainerName: string | null;
 };
 
-async function discoverQuadletService(dirPath: string, dirName: string): Promise<DiscoveredQuadletService | null> {
-  let entries;
-  try {
-    entries = await readdir(dirPath, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-
-  const unitFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(CONTAINER_UNIT_EXTENSION));
+async function discoverQuadletServiceFromFiles(
+  sourceDir: string,
+  dirName: string,
+  unitFiles: DiscoveredUnitFile[],
+): Promise<DiscoveredQuadletService | null> {
   if (unitFiles.length === 0) return null;
-
   const parsedUnits = await Promise.all(
-    unitFiles.map(async (entry): Promise<DiscoveredUnit | null> => {
-      const unitBaseName = entry.name.slice(0, -CONTAINER_UNIT_EXTENSION.length);
+    unitFiles.map(async ({ unitBaseName, filePath }): Promise<DiscoveredUnit | null> => {
       try {
-        const content = await readFile(path.join(dirPath, entry.name), "utf8");
+        const content = await readFile(filePath, "utf8");
         return { unitBaseName, info: extractQuadletContainerInfo(unitBaseName, content) };
       } catch (error) {
         logServerAction({
@@ -257,7 +252,7 @@ async function discoverQuadletService(dirPath: string, dirName: string): Promise
           layer: "service",
           action: "docker.quadlet.discoverService",
           status: "error",
-          message: `Could not read quadlet unit ${path.join(dirPath, entry.name)}`,
+          message: `Could not read quadlet unit ${filePath}`,
           error,
         });
         return null;
@@ -268,14 +263,14 @@ async function discoverQuadletService(dirPath: string, dirName: string): Promise
   const containers = parsedUnits.filter((unit): unit is DiscoveredUnit => unit !== null);
   if (containers.length === 0) return null;
 
-  const metadata = await readAppMetadata(dirPath);
+  const metadata = await readAppMetadata(sourceDir);
   const primary = pickPrimaryContainer(containers, metadata?.primaryContainer);
   const slug = slugifyDirName(dirName);
 
   return {
     id: slug,
     dirName,
-    sourceDir: dirPath,
+    sourceDir,
     name: metadata?.name ?? titleCaseFromSlug(slug),
     description: metadata?.description ?? null,
     category: metadata?.category ?? null,
@@ -288,6 +283,28 @@ async function discoverQuadletService(dirPath: string, dirName: string): Promise
     })),
     primaryContainerName: primary?.info.containerName ?? null,
   };
+}
+
+async function discoverQuadletService(dirPath: string, dirName: string): Promise<DiscoveredQuadletService | null> {
+  let entries;
+  try {
+    entries = await readdir(dirPath, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const unitFiles = entries
+    .filter(
+      (entry) =>
+        (entry.isFile() || entry.isSymbolicLink()) &&
+        entry.name.endsWith(CONTAINER_UNIT_EXTENSION),
+    )
+    .map((entry) => ({
+      unitBaseName: entry.name.slice(0, -CONTAINER_UNIT_EXTENSION.length),
+      filePath: path.join(dirPath, entry.name),
+    }));
+
+  return discoverQuadletServiceFromFiles(dirPath, dirName, unitFiles);
 }
 
 async function discoverFlatQuadletUnit(root: string, fileName: string): Promise<DiscoveredQuadletService | null> {
@@ -328,7 +345,8 @@ async function discoverFlatQuadletUnit(root: string, fileName: string): Promise<
 /**
  * Scans the immediate subdirectories of `root` for grouped Podman quadlet
  * services, and also accepts flat `*.container` files from the standard
- * systemd Quadlet directory. Grouped folders can include app.yaml metadata.
+ * systemd Quadlet directory. Flat symlinks are grouped by their resolved
+ * service folder, preserving that folder's app.yaml metadata.
  */
 export async function discoverQuadletServices(root: string): Promise<DiscoveredQuadletService[]> {
   let entries;
@@ -347,10 +365,59 @@ export async function discoverQuadletServices(root: string): Promise<DiscoveredQ
   }
 
   const directories = entries.filter((entry) => entry.isDirectory());
-  const unitFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(CONTAINER_UNIT_EXTENSION));
+  const unitFiles = entries.filter(
+    (entry) =>
+      (entry.isFile() || entry.isSymbolicLink()) &&
+      entry.name.endsWith(CONTAINER_UNIT_EXTENSION),
+  );
+
+  // The homelab's setup script links each service's units flat into the user
+  // Quadlet directory. Resolve those links back to their service folders so
+  // units stay grouped and their app.yaml metadata/icons remain available.
+  const linkedUnitsBySourceDir = new Map<string, DiscoveredUnitFile[]>();
+  const flatUnitFiles: typeof unitFiles = [];
+  const unresolvedLinks: typeof unitFiles = [];
+  const resolvedLinks = await Promise.all(
+    unitFiles.map(async (entry) => {
+      if (!entry.isSymbolicLink()) return { entry, targetPath: null };
+      try {
+        return { entry, targetPath: await realpath(path.join(root, entry.name)) };
+      } catch {
+        return { entry, targetPath: null };
+      }
+    }),
+  );
+
+  // Promise.all keeps the directory's input order, so fallback primary-port
+  // selection remains stable when a service has no explicit primaryContainer.
+  for (const { entry, targetPath } of resolvedLinks) {
+    if (!entry.isSymbolicLink()) {
+      flatUnitFiles.push(entry);
+      continue;
+    }
+    if (!targetPath) {
+      // Preserve the normal read/error handling for broken or inaccessible
+      // links rather than silently treating them as discovered services.
+      unresolvedLinks.push(entry);
+      continue;
+    }
+
+    const sourceDir = path.dirname(targetPath);
+    const files = linkedUnitsBySourceDir.get(sourceDir) ?? [];
+    files.push({
+      unitBaseName: entry.name.slice(0, -CONTAINER_UNIT_EXTENSION.length),
+      filePath: path.join(root, entry.name),
+    });
+    linkedUnitsBySourceDir.set(sourceDir, files);
+  }
+
   const services = await Promise.all([
     ...directories.map((entry) => discoverQuadletService(path.join(root, entry.name), entry.name)),
-    ...unitFiles.map((entry) => discoverFlatQuadletUnit(root, entry.name)),
+    ...Array.from(linkedUnitsBySourceDir, ([sourceDir, files]) =>
+      discoverQuadletServiceFromFiles(sourceDir, path.basename(sourceDir), files),
+    ),
+    ...flatUnitFiles.map((entry) => discoverFlatQuadletUnit(root, entry.name)),
+    ...unresolvedLinks.map((entry) => discoverFlatQuadletUnit(root, entry.name)),
   ]);
 
   return services
